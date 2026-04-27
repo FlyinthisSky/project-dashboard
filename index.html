@@ -139,8 +139,8 @@ const LOGIN_SCOPES = ['Files.ReadWrite.AppFolder'];
 const GRAPH_APPROOT_FILE =
   'https://graph.microsoft.com/v1.0/me/drive/special/approot:/projects.json:/content';
 
-// ── MSAL instance ─────────────────────────────────────────────────────────────
-const msalInstance = new msal.PublicClientApplication(MSAL_CONFIG);
+// ── MSAL instance (initialisé dans l'IIFE pour capturer les erreurs) ─────────
+let msalInstance = null;
 
 // ── Logging helpers ───────────────────────────────────────────────────────────
 function log(msg, type = 'info') {
@@ -197,6 +197,7 @@ function setLoggedOut() {
 
 // ── Token acquisition ─────────────────────────────────────────────────────────
 async function getToken() {
+  if (!msalInstance) throw new Error('MSAL non initialisé – rechargez la page.');
   const accounts = msalInstance.getAllAccounts();
   if (!accounts.length) throw new Error('Aucun compte connecté.');
 
@@ -220,6 +221,7 @@ async function login() {
   clearError();
   log('Démarrage du flow PKCE (popup)…');
   try {
+    if (!msalInstance) throw new Error('MSAL non initialisé – rechargez la page.');
     const resp = await msalInstance.loginPopup({ scopes: LOGIN_SCOPES });
     log(`Connecté en tant que ${resp.account.username || resp.account.name}`, 'ok');
     setLoggedIn(resp.account);
@@ -231,6 +233,7 @@ async function login() {
 async function logout() {
   clearError();
   try {
+    if (!msalInstance) throw new Error('MSAL non initialisé – rechargez la page.');
     await msalInstance.logoutPopup();
     setLoggedOut();
     log('Déconnecté.', 'ok');
@@ -296,8 +299,11 @@ async function readFile() {
 // ── Init : handle redirect + restore session ──────────────────────────────────
 (async () => {
   try {
+    if (typeof msal === 'undefined') {
+      throw new Error('Bibliothèque MSAL non chargée (CDN inaccessible ou version introuvable).');
+    }
+    msalInstance = new msal.PublicClientApplication(MSAL_CONFIG);
     await msalInstance.initialize();
-    // Handle redirect response (in case popup was blocked and redirect was used)
     await msalInstance.handleRedirectPromise();
 
     const accounts = msalInstance.getAllAccounts();
@@ -310,6 +316,7 @@ async function readFile() {
     }
   } catch (err) {
     showError(err);
+    setLoggedOut();
   }
 })();
 </script>
