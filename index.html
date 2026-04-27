@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Project Dashboard – MSAL Validation</title>
+  <script src="https://alcdn.msauth.net/browser/3.27.0/js/msal-browser.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; color: #7dd3fc; }
+
+    #status-bar {
+      width: 100%;
+      max-width: 640px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.875rem;
+      color: #94a3b8;
+    }
+
+    #status-bar .label { font-weight: 600; color: #cbd5e1; margin-right: 0.5rem; }
+
+    .btn {
+      display: inline-block;
+      padding: 0.6rem 1.4rem;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn:hover:not(:disabled) { opacity: 0.85; }
+    .btn-primary   { background: #2563eb; color: #fff; }
+    .btn-secondary { background: #475569; color: #fff; }
+    .btn-danger    { background: #dc2626; color: #fff; }
+
+    #actions { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+
+    .card {
+      width: 100%;
+      max-width: 640px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 { font-size: 1rem; margin-bottom: 0.75rem; color: #93c5fd; }
+
+    #error-box {
+      border-color: #991b1b;
+      background: #1c0a0a;
+      display: none;
+    }
+    #error-box h2 { color: #fca5a5; }
+    #error-box pre { color: #fca5a5; white-space: pre-wrap; word-break: break-word; font-size: 0.8rem; }
+
+    #result-box pre {
+      color: #86efac;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 0.85rem;
+    }
+
+    #log {
+      font-size: 0.8rem;
+      color: #64748b;
+      line-height: 1.6;
+    }
+    #log .ok   { color: #4ade80; }
+    #log .warn { color: #facc15; }
+    #log .err  { color: #f87171; }
+    #log .info { color: #67e8f9; }
+  </style>
+</head>
+<body>
+
+<h1>Project Dashboard – Validation MSAL + OneDrive</h1>
+
+<div id="status-bar">
+  <span class="label">Statut :</span><span id="status-text">Non connecté</span>
+</div>
+
+<div id="actions">
+  <button class="btn btn-primary"   id="btn-login"   onclick="login()">Se connecter</button>
+  <button class="btn btn-secondary" id="btn-write"   onclick="writeFile()" disabled>PUT projects.json</button>
+  <button class="btn btn-secondary" id="btn-read"    onclick="readFile()"  disabled>GET projects.json</button>
+  <button class="btn btn-danger"    id="btn-logout"  onclick="logout()"    disabled>Déconnecter</button>
+</div>
+
+<div class="card" id="error-box">
+  <h2>Erreur</h2>
+  <pre id="error-text"></pre>
+</div>
+
+<div class="card" id="result-box" style="display:none">
+  <h2>Contenu de projects.json</h2>
+  <pre id="result-text"></pre>
+</div>
+
+<div class="card">
+  <h2>Journal</h2>
+  <div id="log"></div>
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const MSAL_CONFIG = {
+  auth: {
+    clientId:   '31c0c6ff-5580-41c8-9753-b94d991cfc66',
+    authority:  'https://login.microsoftonline.com/consumers',
+    redirectUri: 'https://flyinthissky.github.io/project-dashboard',
+  },
+  cache: {
+    cacheLocation:     'sessionStorage',
+    storeAuthStateInCookie: false,
+  },
+};
+
+const LOGIN_SCOPES = ['Files.ReadWrite.AppFolder'];
+
+const GRAPH_APPROOT_FILE =
+  'https://graph.microsoft.com/v1.0/me/drive/special/approot:/projects.json:/content';
+
+// ── MSAL instance ─────────────────────────────────────────────────────────────
+const msalInstance = new msal.PublicClientApplication(MSAL_CONFIG);
+
+// ── Logging helpers ───────────────────────────────────────────────────────────
+function log(msg, type = 'info') {
+  const el = document.getElementById('log');
+  const line = document.createElement('div');
+  line.className = type;
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  el.prepend(line);
+}
+
+function showError(err) {
+  const box  = document.getElementById('error-box');
+  const text = document.getElementById('error-text');
+  let msg = '';
+  if (err instanceof Error) {
+    msg = `${err.name}: ${err.message}`;
+    if (err.errorCode)    msg += `\nerrorCode: ${err.errorCode}`;
+    if (err.subError)     msg += `\nsubError:  ${err.subError}`;
+    if (err.correlationId) msg += `\ncorrelationId: ${err.correlationId}`;
+  } else {
+    msg = String(err);
+  }
+  text.textContent = msg;
+  box.style.display = 'block';
+  log(msg, 'err');
+}
+
+function clearError() {
+  document.getElementById('error-box').style.display = 'none';
+  document.getElementById('error-text').textContent = '';
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function setStatus(txt) {
+  document.getElementById('status-text').textContent = txt;
+}
+
+function setLoggedIn(account) {
+  setStatus(`Connecté : ${account.username || account.name}`);
+  document.getElementById('btn-login').disabled  = true;
+  document.getElementById('btn-write').disabled  = false;
+  document.getElementById('btn-read').disabled   = false;
+  document.getElementById('btn-logout').disabled = false;
+}
+
+function setLoggedOut() {
+  setStatus('Non connecté');
+  document.getElementById('btn-login').disabled  = false;
+  document.getElementById('btn-write').disabled  = true;
+  document.getElementById('btn-read').disabled   = true;
+  document.getElementById('btn-logout').disabled = true;
+  document.getElementById('result-box').style.display = 'none';
+}
+
+// ── Token acquisition ─────────────────────────────────────────────────────────
+async function getToken() {
+  const accounts = msalInstance.getAllAccounts();
+  if (!accounts.length) throw new Error('Aucun compte connecté.');
+
+  try {
+    const resp = await msalInstance.acquireTokenSilent({
+      scopes:  LOGIN_SCOPES,
+      account: accounts[0],
+    });
+    log('Token acquis silencieusement.', 'ok');
+    return resp.accessToken;
+  } catch (silentErr) {
+    log(`Silent token failed (${silentErr.errorCode}), popup…`, 'warn');
+    const resp = await msalInstance.acquireTokenPopup({ scopes: LOGIN_SCOPES });
+    log('Token acquis via popup.', 'ok');
+    return resp.accessToken;
+  }
+}
+
+// ── Auth flows ────────────────────────────────────────────────────────────────
+async function login() {
+  clearError();
+  log('Démarrage du flow PKCE (popup)…');
+  try {
+    const resp = await msalInstance.loginPopup({ scopes: LOGIN_SCOPES });
+    log(`Connecté en tant que ${resp.account.username || resp.account.name}`, 'ok');
+    setLoggedIn(resp.account);
+  } catch (err) {
+    showError(err);
+  }
+}
+
+async function logout() {
+  clearError();
+  try {
+    await msalInstance.logoutPopup();
+    setLoggedOut();
+    log('Déconnecté.', 'ok');
+  } catch (err) {
+    showError(err);
+  }
+}
+
+// ── Graph calls ───────────────────────────────────────────────────────────────
+async function writeFile() {
+  clearError();
+  log('PUT projects.json → approot…');
+  try {
+    const token   = await getToken();
+    const payload = JSON.stringify({ projects: [] }, null, 2);
+
+    const resp = await fetch(GRAPH_APPROOT_FILE, {
+      method:  'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: payload,
+    });
+
+    if (!resp.ok) {
+      const body = await resp.text();
+      throw new Error(`HTTP ${resp.status} ${resp.statusText}\n${body}`);
+    }
+
+    const data = await resp.json();
+    log(`PUT réussi – id: ${data.id}, taille: ${data.size} octets`, 'ok');
+  } catch (err) {
+    showError(err);
+  }
+}
+
+async function readFile() {
+  clearError();
+  log('GET projects.json ← approot…');
+  try {
+    const token = await getToken();
+
+    const resp = await fetch(GRAPH_APPROOT_FILE, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!resp.ok) {
+      const body = await resp.text();
+      throw new Error(`HTTP ${resp.status} ${resp.statusText}\n${body}`);
+    }
+
+    const data = await resp.json();
+    const pretty = JSON.stringify(data, null, 2);
+    document.getElementById('result-text').textContent = pretty;
+    document.getElementById('result-box').style.display = 'block';
+    log('GET réussi, contenu affiché ci-dessus.', 'ok');
+  } catch (err) {
+    showError(err);
+  }
+}
+
+// ── Init : handle redirect + restore session ──────────────────────────────────
+(async () => {
+  try {
+    await msalInstance.initialize();
+    // Handle redirect response (in case popup was blocked and redirect was used)
+    await msalInstance.handleRedirectPromise();
+
+    const accounts = msalInstance.getAllAccounts();
+    if (accounts.length) {
+      log(`Session restaurée : ${accounts[0].username || accounts[0].name}`, 'info');
+      setLoggedIn(accounts[0]);
+    } else {
+      log('Aucune session active.', 'info');
+      setLoggedOut();
+    }
+  } catch (err) {
+    showError(err);
+  }
+})();
+</script>
+</body>
+</html>
