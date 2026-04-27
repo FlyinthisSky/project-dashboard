@@ -37,7 +37,6 @@
       <span style="font-size:0.8rem;color:var(--text-secondary)" id="account-name"></span>
       <button class="btn btn-primary" id="btn-new-project">&#xFF0B; Nouveau projet</button>
       <button class="btn-icon" id="btn-refresh" title="Rafraichir (R)" aria-label="Rafraichir">&#8635;</button>
-      <button class="btn-icon" id="btn-logout" title="Se deconnecter" aria-label="Se deconnecter">&#9099;</button>
     </div>
   </header>
 
@@ -73,8 +72,8 @@
     <span class="toolbar-meta" id="toolbar-meta"></span>
   </div>
 
-  <!-- Main -->
-  <main>
+  <!-- Main: dashboard view -->
+  <main id="dashboard-view">
 
     <!-- Projects list -->
     <section aria-label="Liste des projets">
@@ -101,6 +100,9 @@
     </section>
 
   </main>
+
+  <!-- Main: project detail view -->
+  <main id="project-view" hidden></main>
 </div>
 
 <!-- ── Project dialog ───────────────────────────────────────────────────────── -->
@@ -139,10 +141,15 @@
     </div>
     <div class="field">
       <label for="f-progress">Avancement</label>
-      <div class="range-row">
+      <div class="progress-mode-toggle" role="tablist" aria-label="Mode d'avancement">
+        <button type="button" class="mode-btn is-active" data-mode="manual" role="tab" aria-selected="true">Manuel</button>
+        <button type="button" class="mode-btn" data-mode="auto" role="tab" aria-selected="false">Auto (tâches)</button>
+      </div>
+      <div class="range-row" id="f-progress-row">
         <input type="range" id="f-progress" min="0" max="100" step="5" value="0" />
         <span class="range-value" id="f-progress-val">0%</span>
       </div>
+      <p class="field-hint" id="f-progress-hint" hidden>Calculé automatiquement à partir des tâches terminées.</p>
     </div>
     <div class="field">
       <label for="f-tech">Langage / Techno</label>
