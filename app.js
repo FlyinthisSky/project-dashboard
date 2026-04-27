@@ -1,4 +1,7 @@
 import { PublicClientApplication } from 'https://esm.sh/@azure/msal-browser@4.30.0';
+import { marked } from 'https://esm.sh/marked@13';
+
+marked.setOptions({ breaks: true, gfm: true });
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -41,11 +44,6 @@ async function login() {
   } catch (err) {
     showLoginError(err.message || String(err));
   }
-}
-
-async function logout() {
-  try { await msalInstance.logoutPopup(); } catch { /* ignore */ }
-  showLogin();
 }
 
 // ── Graph helpers ─────────────────────────────────────────────────────────────
@@ -91,6 +89,8 @@ const state = {
   filterPriority: 'all',
   filterTag: 'all',
   sort: 'updated',
+  currentProjectId: null,
+  notesMode: 'edit',
 };
 
 let saveTimer = null;
@@ -143,6 +143,29 @@ const STATUS_META = {
 
 const PRIORITY_LABEL = { low: 'Basse', medium: 'Moyenne', high: 'Haute' };
 
+const TASK_STATUS_ORDER = ['todo', 'doing', 'done'];
+const TASK_STATUS_LABEL = { todo: 'À faire', doing: 'En cours', done: 'Terminée' };
+
+function taskWeight(task) {
+  if (task.subtasks?.length) {
+    const done = task.subtasks.filter(s => s.done).length;
+    return done / task.subtasks.length;
+  }
+  return task.status === 'done' ? 1 : task.status === 'doing' ? 0.5 : 0;
+}
+
+function computeAutoProgress(project) {
+  const tasks = project.tasks || [];
+  if (!tasks.length) return 0;
+  const sum = tasks.reduce((acc, t) => acc + taskWeight(t), 0);
+  return Math.round((sum / tasks.length) * 100);
+}
+
+function displayProgress(project) {
+  if (project.progressMode === 'auto') return computeAutoProgress(project);
+  return Math.max(0, Math.min(100, project.progress || 0));
+}
+
 function relativeDate(iso) {
   if (!iso) return '';
   const diff = Date.now() - new Date(iso).getTime();
@@ -187,7 +210,7 @@ function getFilteredProjects() {
 
   list.sort((a, b) => {
     if (state.sort === 'name') return a.name.localeCompare(b.name);
-    if (state.sort === 'progress') return (b.progress || 0) - (a.progress || 0);
+    if (state.sort === 'progress') return displayProgress(b) - displayProgress(a);
     if (state.sort === 'created') return new Date(b.createdAt) - new Date(a.createdAt);
     return new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt);
   });
@@ -222,9 +245,11 @@ function renderProjects() {
   container.innerHTML = list.map(p => {
     const sm = STATUS_META[p.status] || STATUS_META.active;
     const tags = (p.tags || []).map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('');
-    const prog = Math.max(0, Math.min(100, p.progress || 0));
+    const prog = displayProgress(p);
+    const status = p.status || 'active';
+    const taskCount = (p.tasks || []).length;
     return `
-    <article class="project-card" data-id="${escHtml(p.id)}" role="button" tabindex="0" aria-label="Projet ${escHtml(p.name)}">
+    <article class="project-card status-${escHtml(status)}" data-id="${escHtml(p.id)}" role="button" tabindex="0" aria-label="Projet ${escHtml(p.name)}">
       <div class="project-card-head">
         <div class="project-card-name">
           <span class="project-status" title="${escHtml(sm.label)}">${sm.emoji}</span>
@@ -238,9 +263,10 @@ function renderProjects() {
       <div class="project-card-meta">
         ${p.tech ? `<span class="tech">${escHtml(p.tech)}</span>` : ''}
         <span>${relativeDate(p.updatedAt || p.createdAt)}</span>
+        ${taskCount ? `<span title="Tâches">✓ ${taskCount}</span>` : ''}
         ${p.githubUrl ? `<a href="${escHtml(p.githubUrl)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">GitHub ↗</a>` : ''}
       </div>
-      <div class="project-progress" title="${prog}%">
+      <div class="project-progress" title="${prog}%${p.progressMode === 'auto' ? ' (auto)' : ''}">
         <div class="progress-track"><div class="progress-fill" style="width:${prog}%"></div></div>
         <span class="progress-value">${prog}%</span>
       </div>
@@ -255,13 +281,13 @@ function renderProjects() {
   container.querySelectorAll('.project-card').forEach(card => {
     card.addEventListener('click', e => {
       if (e.target.closest('[data-action]')) return;
-      openProjectDialog(state.projects.find(p => p.id === card.dataset.id));
+      openProjectView(card.dataset.id);
     });
     card.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         if (!e.target.closest('[data-action]'))
-          openProjectDialog(state.projects.find(p => p.id === card.dataset.id));
+          openProjectView(card.dataset.id);
       }
     });
     card.querySelectorAll('[data-action]').forEach(btn => {
@@ -435,10 +461,345 @@ function renderActivityChart() {
 // ── Main render ───────────────────────────────────────────────────────────────
 
 function render() {
+  const dashboard = document.getElementById('dashboard-view');
+  const projectView = document.getElementById('project-view');
+  const toolbar = document.querySelector('.toolbar');
+
+  if (state.currentProjectId) {
+    const proj = state.projects.find(p => p.id === state.currentProjectId);
+    if (!proj) {
+      state.currentProjectId = null;
+    } else {
+      if (dashboard) dashboard.hidden = true;
+      if (toolbar) toolbar.hidden = true;
+      if (projectView) projectView.hidden = false;
+      renderProjectView(proj);
+      return;
+    }
+  }
+
+  if (dashboard) dashboard.hidden = false;
+  if (toolbar) toolbar.hidden = false;
+  if (projectView) projectView.hidden = true;
+
   renderTagFilter();
   renderProjects();
   renderStatusChart();
   renderActivityChart();
+}
+
+// ── Project detail view ──────────────────────────────────────────────────────
+
+function openProjectView(id) {
+  state.currentProjectId = id;
+  state.notesMode = 'edit';
+  render();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function closeProjectView() {
+  state.currentProjectId = null;
+  render();
+}
+
+function renderProjectView(p) {
+  const root = document.getElementById('project-view');
+  if (!root) return;
+
+  const sm = STATUS_META[p.status] || STATUS_META.active;
+  const status = p.status || 'active';
+  const prog = displayProgress(p);
+  const auto = p.progressMode === 'auto';
+  const tags = (p.tags || []).map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('');
+  const tasks = p.tasks || [];
+  const doneCount = tasks.filter(t => t.status === 'done' || (t.subtasks?.length && t.subtasks.every(s => s.done))).length;
+
+  root.innerHTML = `
+    <div class="pv-topbar">
+      <button class="btn-back" id="pv-back" aria-label="Retour à la liste">← Retour</button>
+      <div class="pv-topbar-spacer"></div>
+      <button class="btn btn-ghost" id="pv-edit">Modifier</button>
+      <button class="btn btn-danger" id="pv-delete">Supprimer</button>
+    </div>
+
+    <header class="pv-header status-${escHtml(status)}">
+      <div class="pv-title-row">
+        <h1 class="pv-title">
+          <span class="project-status" title="${escHtml(sm.label)}">${sm.emoji}</span>
+          <span>${escHtml(p.name)}</span>
+        </h1>
+        <div class="pv-actions">
+          <span class="priority-pill priority-${escHtml(p.priority || 'low')}">${escHtml(PRIORITY_LABEL[p.priority] || 'Basse')}</span>
+        </div>
+      </div>
+      <div class="pv-meta">
+        <span><strong>Statut</strong> · ${escHtml(sm.label)}</span>
+        ${p.tech ? `<span class="tech">${escHtml(p.tech)}</span>` : ''}
+        <span>Créé · ${relativeDate(p.createdAt)}</span>
+        <span>Modifié · ${relativeDate(p.updatedAt || p.createdAt)}</span>
+        ${p.githubUrl ? `<a href="${escHtml(p.githubUrl)}" target="_blank" rel="noopener">GitHub ↗</a>` : ''}
+      </div>
+      ${p.description ? `<p class="pv-description">${escHtml(p.description)}</p>` : ''}
+      <div class="pv-progress" title="${prog}%${auto ? ' (auto)' : ''}">
+        <div class="progress-track"><div class="progress-fill" style="width:${prog}%"></div></div>
+        <span class="progress-value">${prog}%${auto ? ' · auto' : ''}</span>
+      </div>
+      ${tags ? `<div class="pv-tags">${tags}</div>` : ''}
+    </header>
+
+    <div class="pv-grid">
+
+      <section class="pv-card" aria-label="Tâches">
+        <div class="pv-card-head">
+          <h3>Tâches</h3>
+          <span class="pv-card-meta">${doneCount} / ${tasks.length} terminée${tasks.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="task-list" id="pv-task-list"></div>
+        <div class="task-add-row">
+          <input type="text" class="task-add-input" id="pv-task-add" placeholder="Ajouter une tâche... (Entrée pour valider)" />
+        </div>
+      </section>
+
+      <section class="pv-card" aria-label="Notes">
+        <div class="pv-card-head">
+          <h3>Notes</h3>
+          <div class="notes-tabs" role="tablist">
+            <button class="mode-btn ${state.notesMode === 'edit' ? 'is-active' : ''}" data-notes-mode="edit" role="tab" aria-selected="${state.notesMode === 'edit'}">Édition</button>
+            <button class="mode-btn ${state.notesMode === 'preview' ? 'is-active' : ''}" data-notes-mode="preview" role="tab" aria-selected="${state.notesMode === 'preview'}">Aperçu</button>
+          </div>
+        </div>
+        ${state.notesMode === 'edit'
+          ? `<textarea class="notes-textarea" id="pv-notes" placeholder="Markdown supporté : # Titres, **gras**, *italique*, [liens](https://...), - listes, \`code\`, > citations..."></textarea>`
+          : `<div class="notes-preview ${(!p.notes || !p.notes.trim()) ? 'is-empty' : ''}" id="pv-notes-preview"></div>`
+        }
+      </section>
+
+    </div>
+  `;
+
+  document.getElementById('pv-back').addEventListener('click', closeProjectView);
+  document.getElementById('pv-edit').addEventListener('click', () => openProjectDialog(p));
+  document.getElementById('pv-delete').addEventListener('click', () => confirmDelete(p.id));
+
+  renderTaskList(p);
+  setupTaskAddInput(p);
+  setupNotesArea(p);
+
+  root.querySelectorAll('[data-notes-mode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.notesMode = btn.dataset.notesMode;
+      render();
+    });
+  });
+}
+
+// ── Tasks ────────────────────────────────────────────────────────────────────
+
+function renderTaskList(p) {
+  const list = document.getElementById('pv-task-list');
+  if (!list) return;
+  const tasks = p.tasks || [];
+
+  if (!tasks.length) {
+    list.innerHTML = `<div class="task-empty">Aucune tâche pour l'instant. Ajoutes-en une ci-dessous.</div>`;
+    return;
+  }
+
+  list.innerHTML = tasks.map(t => {
+    const subs = t.subtasks || [];
+    const isOpen = !!t._open;
+    return `
+    <div class="task-item status-${escHtml(t.status || 'todo')}" data-task-id="${escHtml(t.id)}">
+      <div class="task-row">
+        ${subs.length ? `<button class="task-expand ${isOpen ? 'is-open' : ''}" data-action="toggle-expand" aria-label="Afficher les sous-tâches">▶</button>` : `<span style="width:18px;flex-shrink:0"></span>`}
+        <button class="task-status-btn status-${escHtml(t.status || 'todo')}" data-action="cycle-status" title="Changer le statut (À faire → En cours → Terminée)" aria-label="Statut: ${escHtml(TASK_STATUS_LABEL[t.status || 'todo'])}"></button>
+        <input type="text" class="task-title-input" data-action="edit-title" value="${escHtml(t.title || '')}" placeholder="Titre de la tâche" />
+        <div class="task-actions">
+          <button class="btn-icon" data-action="add-subtask" title="Ajouter une sous-tâche" aria-label="Ajouter une sous-tâche">+</button>
+          <button class="btn-icon" data-action="delete-task" title="Supprimer la tâche" aria-label="Supprimer la tâche">🗑️</button>
+        </div>
+      </div>
+      ${(subs.length && isOpen) ? `
+        <div class="subtask-list">
+          ${subs.map(s => `
+            <div class="subtask-row" data-sub-id="${escHtml(s.id)}">
+              <button class="subtask-checkbox ${s.done ? 'is-done' : ''}" data-action="toggle-sub" aria-label="${s.done ? 'Décocher' : 'Cocher'}"></button>
+              <input type="text" class="subtask-title-input ${s.done ? 'is-done' : ''}" data-action="edit-sub-title" value="${escHtml(s.title || '')}" placeholder="Sous-tâche" />
+              <button class="subtask-remove" data-action="delete-sub" aria-label="Supprimer la sous-tâche">×</button>
+            </div>
+          `).join('')}
+          <button class="add-subtask-btn" data-action="new-sub">+ Sous-tâche</button>
+        </div>
+      ` : ''}
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.task-item').forEach(el => {
+    const taskId = el.dataset.taskId;
+    el.querySelectorAll('[data-action]').forEach(btn => {
+      const action = btn.dataset.action;
+      if (action === 'cycle-status') {
+        btn.addEventListener('click', () => cycleTaskStatus(p.id, taskId));
+      } else if (action === 'edit-title') {
+        btn.addEventListener('change', e => updateTaskTitle(p.id, taskId, e.target.value));
+        btn.addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+      } else if (action === 'add-subtask') {
+        btn.addEventListener('click', () => addSubtask(p.id, taskId));
+      } else if (action === 'new-sub') {
+        btn.addEventListener('click', () => addSubtask(p.id, taskId));
+      } else if (action === 'delete-task') {
+        btn.addEventListener('click', () => deleteTask(p.id, taskId));
+      } else if (action === 'toggle-expand') {
+        btn.addEventListener('click', () => toggleTaskExpand(p.id, taskId));
+      }
+    });
+    el.querySelectorAll('.subtask-row').forEach(row => {
+      const subId = row.dataset.subId;
+      row.querySelectorAll('[data-action]').forEach(btn => {
+        const action = btn.dataset.action;
+        if (action === 'toggle-sub') {
+          btn.addEventListener('click', () => toggleSubtask(p.id, taskId, subId));
+        } else if (action === 'edit-sub-title') {
+          btn.addEventListener('change', e => updateSubtaskTitle(p.id, taskId, subId, e.target.value));
+          btn.addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+        } else if (action === 'delete-sub') {
+          btn.addEventListener('click', () => deleteSubtask(p.id, taskId, subId));
+        }
+      });
+    });
+  });
+}
+
+function setupTaskAddInput(p) {
+  const input = document.getElementById('pv-task-add');
+  if (!input) return;
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const title = input.value.trim();
+      if (!title) return;
+      input.value = '';
+      addTask(p.id, title);
+      document.getElementById('pv-task-add')?.focus();
+    }
+  });
+}
+
+function mutateProject(id, mutator) {
+  const idx = state.projects.findIndex(p => p.id === id);
+  if (idx < 0) return;
+  const next = { ...state.projects[idx] };
+  mutator(next);
+  next.updatedAt = new Date().toISOString();
+  const projects = [...state.projects];
+  projects[idx] = next;
+  setState({ projects });
+  scheduleSave();
+}
+
+function addTask(projectId, title) {
+  mutateProject(projectId, p => {
+    p.tasks = [...(p.tasks || []), { id: uuid(), title, status: 'todo', subtasks: [] }];
+  });
+}
+
+function updateTaskTitle(projectId, taskId, title) {
+  mutateProject(projectId, p => {
+    p.tasks = (p.tasks || []).map(t => t.id === taskId ? { ...t, title: title.trim() } : t);
+  });
+}
+
+function cycleTaskStatus(projectId, taskId) {
+  mutateProject(projectId, p => {
+    p.tasks = (p.tasks || []).map(t => {
+      if (t.id !== taskId) return t;
+      const idx = TASK_STATUS_ORDER.indexOf(t.status || 'todo');
+      const next = TASK_STATUS_ORDER[(idx + 1) % TASK_STATUS_ORDER.length];
+      return { ...t, status: next };
+    });
+  });
+}
+
+function deleteTask(projectId, taskId) {
+  mutateProject(projectId, p => {
+    p.tasks = (p.tasks || []).filter(t => t.id !== taskId);
+  });
+}
+
+function toggleTaskExpand(projectId, taskId) {
+  mutateProject(projectId, p => {
+    p.tasks = (p.tasks || []).map(t => t.id === taskId ? { ...t, _open: !t._open } : t);
+  });
+}
+
+function addSubtask(projectId, taskId) {
+  mutateProject(projectId, p => {
+    p.tasks = (p.tasks || []).map(t => {
+      if (t.id !== taskId) return t;
+      const subtasks = [...(t.subtasks || []), { id: uuid(), title: '', done: false }];
+      return { ...t, subtasks, _open: true };
+    });
+  });
+}
+
+function toggleSubtask(projectId, taskId, subId) {
+  mutateProject(projectId, p => {
+    p.tasks = (p.tasks || []).map(t => {
+      if (t.id !== taskId) return t;
+      const subtasks = (t.subtasks || []).map(s => s.id === subId ? { ...s, done: !s.done } : s);
+      return { ...t, subtasks };
+    });
+  });
+}
+
+function updateSubtaskTitle(projectId, taskId, subId, title) {
+  mutateProject(projectId, p => {
+    p.tasks = (p.tasks || []).map(t => {
+      if (t.id !== taskId) return t;
+      const subtasks = (t.subtasks || []).map(s => s.id === subId ? { ...s, title: title.trim() } : s);
+      return { ...t, subtasks };
+    });
+  });
+}
+
+function deleteSubtask(projectId, taskId, subId) {
+  mutateProject(projectId, p => {
+    p.tasks = (p.tasks || []).map(t => {
+      if (t.id !== taskId) return t;
+      return { ...t, subtasks: (t.subtasks || []).filter(s => s.id !== subId) };
+    });
+  });
+}
+
+// ── Notes (markdown) ─────────────────────────────────────────────────────────
+
+function silentNotesUpdate(projectId, value) {
+  const idx = state.projects.findIndex(p => p.id === projectId);
+  if (idx < 0) return;
+  state.projects[idx] = { ...state.projects[idx], notes: value, updatedAt: new Date().toISOString() };
+}
+
+function setupNotesArea(p) {
+  if (state.notesMode === 'edit') {
+    const ta = document.getElementById('pv-notes');
+    if (!ta) return;
+    ta.value = p.notes || '';
+    ta.addEventListener('input', () => {
+      silentNotesUpdate(p.id, ta.value);
+      scheduleSave();
+    });
+  } else {
+    const preview = document.getElementById('pv-notes-preview');
+    if (!preview) return;
+    if (!p.notes || !p.notes.trim()) {
+      preview.textContent = 'Aucune note. Passe en mode Édition pour en ajouter.';
+    } else {
+      preview.innerHTML = marked.parse(p.notes);
+      preview.querySelectorAll('a').forEach(a => {
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+      });
+    }
+  }
 }
 
 // ── Project dialog ────────────────────────────────────────────────────────────
@@ -462,6 +823,9 @@ function openProjectDialog(existing = null) {
     notes:       dlg.querySelector('#f-notes'),
     github:      dlg.querySelector('#f-github'),
   };
+
+  const mode = existing?.progressMode === 'auto' ? 'auto' : 'manual';
+  applyProgressMode(dlg, mode, existing);
 
   if (existing) {
     f.name.value        = existing.name || '';
@@ -494,12 +858,46 @@ function openProjectDialog(existing = null) {
   f.name.focus();
 }
 
+function applyProgressMode(dlg, mode, existing = null) {
+  const row = dlg.querySelector('#f-progress-row');
+  const hint = dlg.querySelector('#f-progress-hint');
+  const buttons = dlg.querySelectorAll('.progress-mode-toggle .mode-btn');
+  buttons.forEach(b => {
+    const active = b.dataset.mode === mode;
+    b.classList.toggle('is-active', active);
+    b.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  if (mode === 'auto') {
+    if (row) row.hidden = true;
+    if (hint) {
+      hint.hidden = false;
+      const auto = existing ? computeAutoProgress(existing) : 0;
+      const taskCount = existing?.tasks?.length || 0;
+      hint.textContent = taskCount
+        ? `Calculé automatiquement à partir des tâches (${auto}% — ${taskCount} tâche${taskCount > 1 ? 's' : ''}).`
+        : `Calculé automatiquement à partir des tâches. Aucune tâche pour l'instant.`;
+    }
+  } else {
+    if (row) row.hidden = false;
+    if (hint) hint.hidden = true;
+  }
+  dlg.dataset.progressMode = mode;
+}
+
 function setupProjectDialog() {
   const dlg = document.getElementById('project-dialog');
   if (!dlg) return;
 
   dlg.querySelector('#f-progress').addEventListener('input', e => {
     dlg.querySelector('#f-progress-val').textContent = e.target.value + '%';
+  });
+
+  dlg.querySelectorAll('.progress-mode-toggle .mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = dlg.querySelector('#btn-dlg-save').dataset.id;
+      const existing = id ? state.projects.find(p => p.id === id) : null;
+      applyProgressMode(dlg, btn.dataset.mode, existing);
+    });
   });
 
   dlg.querySelector('#btn-dlg-cancel').addEventListener('click', () => dlg.close());
@@ -523,6 +921,8 @@ function setupProjectDialog() {
     const rawTags = dlg.querySelector('#f-tags').value;
     const tags = rawTags.split(',').map(t => t.trim()).filter(Boolean);
 
+    const progressMode = dlg.dataset.progressMode === 'auto' ? 'auto' : 'manual';
+
     const project = {
       id,
       name,
@@ -530,10 +930,12 @@ function setupProjectDialog() {
       status:      dlg.querySelector('#f-status').value,
       priority:    dlg.querySelector('#f-priority').value,
       progress:    Number(dlg.querySelector('#f-progress').value),
+      progressMode,
       tech:        dlg.querySelector('#f-tech').value.trim(),
       tags,
       notes:       dlg.querySelector('#f-notes').value.trim(),
       githubUrl:   dlg.querySelector('#f-github').value.trim(),
+      tasks:       existing?.tasks || [],
       createdAt:   existing?.createdAt || now,
       updatedAt:   now,
     };
@@ -616,7 +1018,6 @@ function setupToolbar() {
 
   document.getElementById('btn-new-project')?.addEventListener('click', () => openProjectDialog());
   document.getElementById('btn-refresh')?.addEventListener('click', refreshData);
-  document.getElementById('btn-logout')?.addEventListener('click', logout);
 }
 
 // ── Login UI helpers ──────────────────────────────────────────────────────────
@@ -668,6 +1069,15 @@ function onAuthenticated(account) {
 
 function setupKeyboardShortcuts() {
   document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && state.currentProjectId) {
+      const dlg = document.getElementById('project-dialog');
+      const cdlg = document.getElementById('confirm-dialog');
+      if (!dlg?.open && !cdlg?.open) {
+        e.preventDefault();
+        closeProjectView();
+        return;
+      }
+    }
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault();
