@@ -4,8 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Project Dashboard – MSAL Validation</title>
-  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"
-          crossorigin="anonymous"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -96,14 +94,14 @@
 <h1>Project Dashboard – Validation MSAL + OneDrive</h1>
 
 <div id="status-bar">
-  <span class="label">Statut :</span><span id="status-text">Non connecté</span>
+  <span class="label">Statut :</span><span id="status-text">Chargement…</span>
 </div>
 
 <div id="actions">
-  <button class="btn btn-primary"   id="btn-login"   onclick="login()">Se connecter</button>
-  <button class="btn btn-secondary" id="btn-write"   onclick="writeFile()" disabled>PUT projects.json</button>
-  <button class="btn btn-secondary" id="btn-read"    onclick="readFile()"  disabled>GET projects.json</button>
-  <button class="btn btn-danger"    id="btn-logout"  onclick="logout()"    disabled>Déconnecter</button>
+  <button class="btn btn-primary"   id="btn-login"   onclick="window._msal.login()">Se connecter</button>
+  <button class="btn btn-secondary" id="btn-write"   onclick="window._msal.writeFile()" disabled>PUT projects.json</button>
+  <button class="btn btn-secondary" id="btn-read"    onclick="window._msal.readFile()"  disabled>GET projects.json</button>
+  <button class="btn btn-danger"    id="btn-logout"  onclick="window._msal.logout()"    disabled>Déconnecter</button>
 </div>
 
 <div class="card" id="error-box">
@@ -121,7 +119,9 @@
   <div id="log"></div>
 </div>
 
-<script>
+<script type="module">
+import { PublicClientApplication } from 'https://esm.sh/@azure/msal-browser@4.30.0';
+
 // ── Config ────────────────────────────────────────────────────────────────────
 const MSAL_CONFIG = {
   auth: {
@@ -140,7 +140,6 @@ const LOGIN_SCOPES = ['Files.ReadWrite.AppFolder'];
 const GRAPH_APPROOT_FILE =
   'https://graph.microsoft.com/v1.0/me/drive/special/approot:/projects.json:/content';
 
-// ── MSAL instance (initialisé dans l'IIFE pour capturer les erreurs) ─────────
 let msalInstance = null;
 
 // ── Logging helpers ───────────────────────────────────────────────────────────
@@ -158,8 +157,8 @@ function showError(err) {
   let msg = '';
   if (err instanceof Error) {
     msg = `${err.name}: ${err.message}`;
-    if (err.errorCode)    msg += `\nerrorCode: ${err.errorCode}`;
-    if (err.subError)     msg += `\nsubError:  ${err.subError}`;
+    if (err.errorCode)     msg += `\nerrorCode: ${err.errorCode}`;
+    if (err.subError)      msg += `\nsubError:  ${err.subError}`;
     if (err.correlationId) msg += `\ncorrelationId: ${err.correlationId}`;
   } else {
     msg = String(err);
@@ -198,7 +197,6 @@ function setLoggedOut() {
 
 // ── Token acquisition ─────────────────────────────────────────────────────────
 async function getToken() {
-  if (!msalInstance) throw new Error('MSAL non initialisé – rechargez la page.');
   const accounts = msalInstance.getAllAccounts();
   if (!accounts.length) throw new Error('Aucun compte connecté.');
 
@@ -222,7 +220,6 @@ async function login() {
   clearError();
   log('Démarrage du flow PKCE (popup)…');
   try {
-    if (!msalInstance) throw new Error('MSAL non initialisé – rechargez la page.');
     const resp = await msalInstance.loginPopup({ scopes: LOGIN_SCOPES });
     log(`Connecté en tant que ${resp.account.username || resp.account.name}`, 'ok');
     setLoggedIn(resp.account);
@@ -234,7 +231,6 @@ async function login() {
 async function logout() {
   clearError();
   try {
-    if (!msalInstance) throw new Error('MSAL non initialisé – rechargez la page.');
     await msalInstance.logoutPopup();
     setLoggedOut();
     log('Déconnecté.', 'ok');
@@ -297,29 +293,27 @@ async function readFile() {
   }
 }
 
-// ── Init : handle redirect + restore session ──────────────────────────────────
-(async () => {
-  try {
-    if (typeof msal === 'undefined') {
-      throw new Error('Bibliothèque MSAL non chargée (CDN inaccessible ou version introuvable).');
-    }
-    msalInstance = new msal.PublicClientApplication(MSAL_CONFIG);
-    await msalInstance.initialize();
-    await msalInstance.handleRedirectPromise();
+// ── Expose aux onclick (les modules ont leur propre scope) ────────────────────
+window._msal = { login, logout, writeFile, readFile };
 
-    const accounts = msalInstance.getAllAccounts();
-    if (accounts.length) {
-      log(`Session restaurée : ${accounts[0].username || accounts[0].name}`, 'info');
-      setLoggedIn(accounts[0]);
-    } else {
-      log('Aucune session active.', 'info');
-      setLoggedOut();
-    }
-  } catch (err) {
-    showError(err);
+// ── Init ──────────────────────────────────────────────────────────────────────
+try {
+  msalInstance = new PublicClientApplication(MSAL_CONFIG);
+  await msalInstance.initialize();
+  await msalInstance.handleRedirectPromise();
+
+  const accounts = msalInstance.getAllAccounts();
+  if (accounts.length) {
+    log(`Session restaurée : ${accounts[0].username || accounts[0].name}`, 'info');
+    setLoggedIn(accounts[0]);
+  } else {
+    log('Aucune session active.', 'info');
     setLoggedOut();
   }
-})();
+} catch (err) {
+  showError(err);
+  setLoggedOut();
+}
 </script>
 </body>
 </html>
