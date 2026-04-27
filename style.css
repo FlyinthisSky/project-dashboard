@@ -324,6 +324,39 @@ main {
   border-color: var(--border-strong);
 }
 
+.project-card.is-pinned {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-card), 0 0 0 1px rgba(212, 165, 116, 0.18);
+}
+
+.pin-badge {
+  position: absolute;
+  top: -8px;
+  right: 14px;
+  background: linear-gradient(135deg, var(--accent-warm), var(--accent-warm-dim));
+  color: #2a1f12;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  box-shadow: var(--shadow-card);
+  pointer-events: none;
+}
+
+.project-card-actions .btn-icon[data-action="pin"] {
+  filter: grayscale(1) brightness(1.2);
+  opacity: 0.55;
+}
+.project-card-actions .btn-icon[data-action="pin"]:hover {
+  opacity: 1;
+  filter: none;
+}
+.project-card-actions .btn-icon[data-action="pin"].is-pinned {
+  filter: none;
+  opacity: 1;
+  border-color: var(--border-strong);
+  background: rgba(212, 165, 116, 0.1);
+}
+
 .project-card-head {
   display: flex;
   align-items: center;
@@ -863,6 +896,12 @@ dialog[open] { display: flex; flex-direction: column; }
   background: rgba(212, 165, 116, 0.06);
 }
 
+.btn.is-pinned {
+  color: var(--accent-warm);
+  border-color: var(--border-strong);
+  background: rgba(212, 165, 116, 0.08);
+}
+
 .pv-topbar-spacer { flex: 1; min-width: 0; }
 
 .pv-header {
@@ -1010,6 +1049,34 @@ dialog[open] { display: flex; flex-direction: column; }
   align-items: center;
   gap: 0.55rem;
   padding: 0.55rem 0.7rem;
+}
+
+.task-drag-handle {
+  width: 18px;
+  height: 22px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  letter-spacing: -1.5px;
+  cursor: grab;
+  background: transparent;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  user-select: none;
+}
+.task-item:hover .task-drag-handle,
+.task-item:focus-within .task-drag-handle { opacity: 1; }
+.task-drag-handle:hover { color: var(--accent-warm); background: rgba(212, 165, 116, 0.08); }
+.task-drag-handle:active { cursor: grabbing; }
+
+.task-item.is-dragging {
+  opacity: 0.4;
+  border-style: dashed;
+  border-color: var(--accent-warm);
 }
 
 .task-status-btn {
@@ -1197,6 +1264,12 @@ dialog[open] { display: flex; flex-direction: column; }
 }
 
 /* ── Notes (markdown) ──────────────────────────────────────────────────── */
+
+.notes-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
 
 .notes-tabs {
   display: inline-flex;

@@ -126,6 +126,10 @@ function deleteProject(id) {
   scheduleSave();
 }
 
+function togglePin(id) {
+  mutateProject(id, p => { p.pinned = !p.pinned; });
+}
+
 function uuid() {
   return ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c =>
     (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)
@@ -201,6 +205,7 @@ function getFilteredProjects() {
       p.name.toLowerCase().includes(q) ||
       (p.description || '').toLowerCase().includes(q) ||
       (p.tech || '').toLowerCase().includes(q) ||
+      (p.notes || '').toLowerCase().includes(q) ||
       (p.tags || []).some(t => t.toLowerCase().includes(q))
     );
   }
@@ -209,6 +214,8 @@ function getFilteredProjects() {
   if (state.filterTag !== 'all') list = list.filter(p => (p.tags || []).includes(state.filterTag));
 
   list.sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1;
+    if (!a.pinned && b.pinned) return 1;
     if (state.sort === 'name') return a.name.localeCompare(b.name);
     if (state.sort === 'progress') return displayProgress(b) - displayProgress(a);
     if (state.sort === 'created') return new Date(b.createdAt) - new Date(a.createdAt);
@@ -249,7 +256,8 @@ function renderProjects() {
     const status = p.status || 'active';
     const taskCount = (p.tasks || []).length;
     return `
-    <article class="project-card status-${escHtml(status)}" data-id="${escHtml(p.id)}" role="button" tabindex="0" aria-label="Projet ${escHtml(p.name)}">
+    <article class="project-card status-${escHtml(status)} ${p.pinned ? 'is-pinned' : ''}" data-id="${escHtml(p.id)}" role="button" tabindex="0" aria-label="Projet ${escHtml(p.name)}">
+      ${p.pinned ? `<span class="pin-badge" aria-label="Épinglé" title="Épinglé">📌</span>` : ''}
       <div class="project-card-head">
         <div class="project-card-name">
           <span class="project-status" title="${escHtml(sm.label)}">${sm.emoji}</span>
@@ -272,6 +280,7 @@ function renderProjects() {
       </div>
       ${tags ? `<div class="tag-row">${tags}</div>` : ''}
       <div class="project-card-actions">
+        <button class="btn-icon ${p.pinned ? 'is-pinned' : ''}" data-action="pin" data-id="${escHtml(p.id)}" title="${p.pinned ? 'Désépingler' : 'Épingler'}" aria-label="${p.pinned ? 'Désépingler' : 'Épingler'} ${escHtml(p.name)}">📌</button>
         <button class="btn-icon" data-action="edit" data-id="${escHtml(p.id)}" title="Modifier" aria-label="Modifier ${escHtml(p.name)}">✏️</button>
         <button class="btn-icon" data-action="delete" data-id="${escHtml(p.id)}" title="Supprimer" aria-label="Supprimer ${escHtml(p.name)}">🗑️</button>
       </div>
@@ -298,6 +307,8 @@ function renderProjects() {
           openProjectDialog(state.projects.find(p => p.id === id));
         else if (btn.dataset.action === 'delete')
           confirmDelete(id);
+        else if (btn.dataset.action === 'pin')
+          togglePin(id);
       });
     });
   });
@@ -518,6 +529,7 @@ function renderProjectView(p) {
     <div class="pv-topbar">
       <button class="btn-back" id="pv-back" aria-label="Retour à la liste">← Retour</button>
       <div class="pv-topbar-spacer"></div>
+      <button class="btn btn-ghost ${p.pinned ? 'is-pinned' : ''}" id="pv-pin" title="${p.pinned ? 'Désépingler' : 'Épingler'}">📌 ${p.pinned ? 'Épinglé' : 'Épingler'}</button>
       <button class="btn btn-ghost" id="pv-edit">Modifier</button>
       <button class="btn btn-danger" id="pv-delete">Supprimer</button>
     </div>
@@ -563,9 +575,12 @@ function renderProjectView(p) {
       <section class="pv-card" aria-label="Notes">
         <div class="pv-card-head">
           <h3>Notes</h3>
-          <div class="notes-tabs" role="tablist">
-            <button class="mode-btn ${state.notesMode === 'edit' ? 'is-active' : ''}" data-notes-mode="edit" role="tab" aria-selected="${state.notesMode === 'edit'}">Édition</button>
-            <button class="mode-btn ${state.notesMode === 'preview' ? 'is-active' : ''}" data-notes-mode="preview" role="tab" aria-selected="${state.notesMode === 'preview'}">Aperçu</button>
+          <div class="notes-head-actions">
+            <div class="notes-tabs" role="tablist">
+              <button class="mode-btn ${state.notesMode === 'edit' ? 'is-active' : ''}" data-notes-mode="edit" role="tab" aria-selected="${state.notesMode === 'edit'}">Édition</button>
+              <button class="mode-btn ${state.notesMode === 'preview' ? 'is-active' : ''}" data-notes-mode="preview" role="tab" aria-selected="${state.notesMode === 'preview'}">Aperçu</button>
+            </div>
+            <button class="btn-icon" id="pv-export-md" title="Exporter en .md" aria-label="Exporter les notes en markdown">⬇</button>
           </div>
         </div>
         ${state.notesMode === 'edit'
@@ -580,6 +595,8 @@ function renderProjectView(p) {
   document.getElementById('pv-back').addEventListener('click', closeProjectView);
   document.getElementById('pv-edit').addEventListener('click', () => openProjectDialog(p));
   document.getElementById('pv-delete').addEventListener('click', () => confirmDelete(p.id));
+  document.getElementById('pv-pin').addEventListener('click', () => togglePin(p.id));
+  document.getElementById('pv-export-md').addEventListener('click', () => exportNotesAsMd(p));
 
   renderTaskList(p);
   setupTaskAddInput(p);
@@ -611,6 +628,7 @@ function renderTaskList(p) {
     return `
     <div class="task-item status-${escHtml(t.status || 'todo')}" data-task-id="${escHtml(t.id)}">
       <div class="task-row">
+        <button class="task-drag-handle" draggable="true" title="Glisser pour réordonner" aria-label="Réordonner la tâche">⋮⋮</button>
         ${subs.length ? `<button class="task-expand ${isOpen ? 'is-open' : ''}" data-action="toggle-expand" aria-label="Afficher les sous-tâches">▶</button>` : `<span style="width:18px;flex-shrink:0"></span>`}
         <button class="task-status-btn status-${escHtml(t.status || 'todo')}" data-action="cycle-status" title="Changer le statut (À faire → En cours → Terminée)" aria-label="Statut: ${escHtml(TASK_STATUS_LABEL[t.status || 'todo'])}"></button>
         <input type="text" class="task-title-input" data-action="edit-title" value="${escHtml(t.title || '')}" placeholder="Titre de la tâche" />
@@ -667,6 +685,63 @@ function renderTaskList(p) {
         }
       });
     });
+  });
+
+  setupTaskDnd(p);
+}
+
+function setupTaskDnd(p) {
+  const list = document.getElementById('pv-task-list');
+  if (!list) return;
+
+  list.querySelectorAll('.task-drag-handle').forEach(handle => {
+    handle.addEventListener('dragstart', e => {
+      const item = handle.closest('.task-item');
+      if (!item) return;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.dataset.taskId);
+      try { e.dataTransfer.setDragImage(item, 20, 20); } catch {}
+      requestAnimationFrame(() => item.classList.add('is-dragging'));
+    });
+    handle.addEventListener('dragend', () => {
+      const dragging = list.querySelector('.is-dragging');
+      if (!dragging) return;
+      dragging.classList.remove('is-dragging');
+      const ids = [...list.querySelectorAll('.task-item')].map(el => el.dataset.taskId);
+      const current = (state.projects.find(x => x.id === p.id)?.tasks || []).map(t => t.id);
+      if (ids.join(',') !== current.join(',')) reorderTasks(p.id, ids);
+    });
+  });
+
+  list.addEventListener('dragover', e => {
+    const dragging = list.querySelector('.is-dragging');
+    if (!dragging) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const after = getTaskAfterCursor(list, e.clientY);
+    if (after == null) {
+      list.appendChild(dragging);
+    } else if (after !== dragging) {
+      list.insertBefore(dragging, after);
+    }
+  });
+}
+
+function getTaskAfterCursor(list, y) {
+  const items = [...list.querySelectorAll('.task-item:not(.is-dragging)')];
+  let closest = { offset: -Infinity, element: null };
+  items.forEach(child => {
+    const box = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) closest = { offset, element: child };
+  });
+  return closest.element;
+}
+
+function reorderTasks(projectId, ids) {
+  mutateProject(projectId, p => {
+    const map = new Map((p.tasks || []).map(t => [t.id, t]));
+    p.tasks = ids.map(id => map.get(id)).filter(Boolean);
   });
 }
 
@@ -800,6 +875,62 @@ function setupNotesArea(p) {
       });
     }
   }
+}
+
+// ── Export notes as markdown ─────────────────────────────────────────────────
+
+function slugify(s) {
+  return String(s || 'projet')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || 'projet';
+}
+
+function exportNotesAsMd(p) {
+  const sm = STATUS_META[p.status] || STATUS_META.active;
+  const tasks = p.tasks || [];
+  const tasksMd = tasks.length ? tasks.map(t => {
+    const box = t.status === 'done' ? '[x]' : t.status === 'doing' ? '[~]' : '[ ]';
+    let line = `- ${box} ${t.title || ''}`;
+    if (t.subtasks?.length) {
+      line += '\n' + t.subtasks.map(s => `  - [${s.done ? 'x' : ' '}] ${s.title || ''}`).join('\n');
+    }
+    return line;
+  }).join('\n') : '_Aucune tâche._';
+
+  const meta = [
+    `# ${p.name}`,
+    '',
+    `> **Statut** · ${sm.label} | **Priorité** · ${PRIORITY_LABEL[p.priority] || 'Basse'} | **Avancement** · ${displayProgress(p)}%`,
+    p.tech ? `> **Techno** · ${p.tech}` : null,
+    p.tags?.length ? `> **Tags** · ${p.tags.join(', ')}` : null,
+    p.githubUrl ? `> **GitHub** · ${p.githubUrl}` : null,
+    '',
+    p.description ? p.description : null,
+    '',
+    '## Tâches',
+    '',
+    tasksMd,
+    '',
+    '## Notes',
+    '',
+    p.notes || '_Aucune note._',
+    '',
+  ].filter(l => l !== null).join('\n');
+
+  const blob = new Blob([meta], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${slugify(p.name)}.md`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast(`Notes exportées : ${a.download}`, 'ok');
 }
 
 // ── Project dialog ────────────────────────────────────────────────────────────
@@ -1079,15 +1210,34 @@ function setupKeyboardShortcuts() {
       }
     }
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
-    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-      e.preventDefault();
-      document.getElementById('search-input')?.focus();
+    if (e.metaKey || e.ctrlKey || e.altKey) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        document.getElementById('search-input')?.focus();
+      }
+      return;
     }
-    if (e.key === 'n' && !e.metaKey && !e.ctrlKey) {
-      const dlg = document.getElementById('project-dialog');
-      if (!dlg?.open && !document.getElementById('confirm-dialog')?.open) openProjectDialog();
+    const dlgOpen = document.getElementById('project-dialog')?.open;
+    const cdlgOpen = document.getElementById('confirm-dialog')?.open;
+    if (dlgOpen || cdlgOpen) return;
+
+    if (state.currentProjectId) {
+      const proj = state.projects.find(p => p.id === state.currentProjectId);
+      if (e.key === 't' || e.key === 'T') {
+        e.preventDefault();
+        document.getElementById('pv-task-add')?.focus();
+      } else if (e.key === 'e' || e.key === 'E') {
+        e.preventDefault();
+        if (proj) openProjectDialog(proj);
+      } else if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        if (proj) togglePin(proj.id);
+      }
+      return;
     }
-    if (e.key === 'r' && !e.metaKey && !e.ctrlKey) refreshData();
+
+    if (e.key === 'n') openProjectDialog();
+    if (e.key === 'r') refreshData();
   });
 }
 
