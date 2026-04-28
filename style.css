@@ -541,12 +541,6 @@ main {
 
 /* ── Charts ────────────────────────────────────────────────────────────── */
 
-.charts-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
-  gap: 1.25rem;
-}
-
 .chart-card {
   background: var(--bg-column);
   border: 1px solid var(--border-subtle);
@@ -610,8 +604,6 @@ main {
   letter-spacing: 1.5px;
   text-transform: uppercase;
 }
-
-.activity-chart svg { width: 100%; height: 180px; display: block; }
 
 .bar-chart .bar { transition: opacity 0.15s; }
 .bar-chart .bar:hover { opacity: 0.8; }
@@ -778,19 +770,6 @@ dialog[open] { display: flex; flex-direction: column; }
 .toast.toast-ok .toast-icon { color: var(--status-active); }
 .toast .toast-icon { font-size: 1.1rem; }
 .toast .toast-text { flex: 1; line-height: 1.35; }
-.toast .toast-action {
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.7px;
-  color: var(--accent-warm);
-  padding: 0.25rem 0.6rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
-  transition: background 0.15s, color 0.15s;
-}
-.toast .toast-action:hover { background: rgba(212, 165, 116, 0.12); }
-
 /* ── Animations ────────────────────────────────────────────────────────── */
 
 @keyframes fadeSlideIn {
@@ -1386,12 +1365,6 @@ dialog[open] { display: flex; flex-direction: column; }
 .notes-preview em { color: var(--text-primary); }
 .notes-preview input[type="checkbox"] { accent-color: var(--accent-warm); margin-right: 0.4em; }
 
-.notes-saved-indicator {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  font-style: italic;
-}
-
 /* ── Sprint tabs ───────────────────────────────────────────────────────── */
 
 .sprint-tabs-bar {
@@ -1656,7 +1629,6 @@ dialog[open] { display: flex; flex-direction: column; }
 /* ── Responsive ────────────────────────────────────────────────────────── */
 
 @media (max-width: 1023px) {
-  .charts-grid { grid-template-columns: 1fr; }
   main, .app-header, .toolbar { padding-left: 1.25rem; padding-right: 1.25rem; }
   .pv-body-grid { grid-template-columns: 1fr; }
   .pv-charts-grid { grid-template-columns: 1fr; }

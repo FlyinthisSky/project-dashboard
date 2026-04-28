@@ -74,7 +74,11 @@ async function loadProjects() {
 
 async function saveProjects(projects) {
   setSyncState('syncing');
-  const body = JSON.stringify({ version: 1, projects });
+  const cleaned = projects.map(p => ({
+    ...p,
+    tasks: (p.tasks || []).map(({ _open, ...t }) => t),
+  }));
+  const body = JSON.stringify({ version: 1, projects: cleaned });
   const res = await graphFetchWithRetry(FILE_URL, { method: 'PUT', body });
   if (!res.ok) throw new Error(`Erreur sauvegarde : HTTP ${res.status}`);
   setSyncState('ok');
@@ -1383,12 +1387,20 @@ function setupProjectDialog() {
     const tags = rawTags.split(',').map(t => t.trim()).filter(Boolean);
 
     const progressMode = dlg.dataset.progressMode === 'auto' ? 'auto' : 'manual';
+    const newStatus = dlg.querySelector('#f-status').value;
+
+    const activityLog = [...(existing?.activityLog || [])];
+    if (existing && existing.status !== newStatus) {
+      const sm = STATUS_META[newStatus] || STATUS_META.active;
+      activityLog.unshift({ type: 'status_changed', text: `Statut changé en "${sm.label}"`, date: now });
+      if (activityLog.length > 30) activityLog.length = 30;
+    }
 
     const project = {
       id,
       name,
       description: dlg.querySelector('#f-description').value.trim(),
-      status:      dlg.querySelector('#f-status').value,
+      status:      newStatus,
       priority:    dlg.querySelector('#f-priority').value,
       progress:    Number(dlg.querySelector('#f-progress').value),
       progressMode,
@@ -1397,6 +1409,9 @@ function setupProjectDialog() {
       notes:       dlg.querySelector('#f-notes').value.trim(),
       githubUrl:   dlg.querySelector('#f-github').value.trim(),
       tasks:       existing?.tasks || [],
+      sprints:     existing?.sprints || [],
+      activityLog,
+      pinned:      existing?.pinned ?? false,
       createdAt:   existing?.createdAt || now,
       updatedAt:   now,
     };
