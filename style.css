@@ -621,6 +621,11 @@ main {
 /* ── Dialogs ───────────────────────────────────────────────────────────── */
 
 dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  height: fit-content;
+  max-height: calc(100dvh - 2rem);
   border: 1px solid var(--border-strong);
   border-radius: 12px;
   background: var(--bg-column);
