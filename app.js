@@ -90,6 +90,7 @@ const state = {
   filterTag: 'all',
   sort: 'updated',
   currentProjectId: null,
+  currentSprintTab: 'backlog',
   notesMode: 'edit',
 };
 
@@ -137,6 +138,14 @@ function uuid() {
 }
 
 // ── Status helpers ────────────────────────────────────────────────────────────
+
+const PROJECT_COLORS = [
+  '#74b9ff', '#a29bfe', '#fd79a8', '#00cec9', '#e17055',
+  '#55efc4', '#fdcb6e', '#6c5ce7', '#e84393', '#00b894',
+];
+function getProjectColor(index) {
+  return PROJECT_COLORS[index % PROJECT_COLORS.length];
+}
 
 const STATUS_META = {
   active:    { emoji: '🟢', label: 'Actif',     color: 'var(--status-active)' },
@@ -326,147 +335,331 @@ function renderTagFilter() {
   sel.value = tags.includes(cur) ? cur : 'all';
 }
 
-// ── Render: donut chart ───────────────────────────────────────────────────────
+// ── Per-project charts ────────────────────────────────────────────────────────
 
-function renderStatusChart() {
-  const el = document.getElementById('chart-status');
+function renderProjectCharts(p) {
+  const grid = document.getElementById('pv-charts-grid');
+  if (!grid) return;
+  const sprints = p.sprints || [];
+  const tasks = p.tasks || [];
+  const activeSprint = sprints.find(s => s.status === 'active' && tasks.some(t => t.sprintId === s.id))
+    || sprints.find(s => s.status === 'active');
+  const ganttSprints = sprints.filter(s => s.startDate && s.endDate);
+
+  let cards = `
+    <div class="chart-card">
+      <h3>Tâches par statut</h3>
+      <div id="pv-chart-donut"></div>
+    </div>`;
+
+  if (sprints.length > 0) cards += `
+    <div class="chart-card">
+      <h3>Vélocité par sprint</h3>
+      <div id="pv-chart-velocity"></div>
+    </div>`;
+
+  if (activeSprint) cards += `
+    <div class="chart-card">
+      <h3>Burndown · ${escHtml(activeSprint.name)}</h3>
+      <div id="pv-chart-burndown"></div>
+    </div>`;
+
+  if (ganttSprints.length > 0) cards += `
+    <div class="chart-card pv-chart-wide">
+      <h3>Planning des sprints</h3>
+      <div id="pv-chart-gantt"></div>
+    </div>`;
+
+  grid.innerHTML = cards;
+  renderProjectTaskDonut(p);
+  if (sprints.length > 0) renderSprintVelocity(p);
+  if (activeSprint) renderBurndownChart(p, activeSprint);
+  if (ganttSprints.length > 0) renderProjectGantt(p);
+}
+
+function renderProjectTaskDonut(p) {
+  const el = document.getElementById('pv-chart-donut');
   if (!el) return;
-
-  const counts = { active: 0, paused: 0, abandoned: 0, done: 0 };
-  state.projects.forEach(p => { if (counts[p.status] !== undefined) counts[p.status]++; });
-  const total = Object.values(counts).reduce((a, b) => a + b, 0);
-
-  const colors = {
-    active: '#55efc4', paused: '#fdcb6e', abandoned: '#ff6b6b', done: '#74b9ff',
-  };
-
-  const R = 70, cx = 90, cy = 90, stroke = 22;
-  const circumference = 2 * Math.PI * R;
-
-  let offset = -Math.PI / 2;
-  let arcs = '';
-
+  const tasks = p.tasks || [];
+  const counts = { todo: 0, doing: 0, done: 0 };
+  tasks.forEach(t => { if (counts[t.status || 'todo'] !== undefined) counts[t.status || 'todo']++; });
+  const total = tasks.length;
+  const colors = { todo: '#636e72', doing: '#fdcb6e', done: '#55efc4' };
+  const labels = { todo: 'À faire', doing: 'En cours', done: 'Terminées' };
+  const R = 55, cx = 70, cy = 70, stroke = 18;
+  let offset = -Math.PI / 2, arcs = '';
   if (total === 0) {
     arcs = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="rgba(212,165,116,0.1)" stroke-width="${stroke}"/>`;
   } else {
     for (const [key, count] of Object.entries(counts)) {
       if (!count) continue;
       const angle = (count / total) * 2 * Math.PI;
-      const x1 = cx + R * Math.cos(offset);
-      const y1 = cy + R * Math.sin(offset);
-      const x2 = cx + R * Math.cos(offset + angle);
-      const y2 = cy + R * Math.sin(offset + angle);
-      const large = angle > Math.PI ? 1 : 0;
-      arcs += `<path d="M ${x1} ${y1} A ${R} ${R} 0 ${large} 1 ${x2} ${y2}"
-        fill="none" stroke="${colors[key]}" stroke-width="${stroke}"
-        stroke-linecap="butt"
-        style="filter:drop-shadow(0 0 4px ${colors[key]}44)"/>`;
+      const x1 = cx + R * Math.cos(offset), y1 = cy + R * Math.sin(offset);
+      const x2 = cx + R * Math.cos(offset + angle), y2 = cy + R * Math.sin(offset + angle);
+      arcs += `<path d="M ${x1} ${y1} A ${R} ${R} 0 ${angle > Math.PI ? 1 : 0} 1 ${x2} ${y2}" fill="none" stroke="${colors[key]}" stroke-width="${stroke}" stroke-linecap="butt" style="filter:drop-shadow(0 0 4px ${colors[key]}44)"/>`;
       offset += angle;
     }
   }
-
-  const legend = Object.entries(STATUS_META).map(([key, meta]) => `
+  const legend = Object.entries(labels).map(([key, label]) => `
     <div class="legend-row">
       <div class="swatch" style="background:${colors[key]};box-shadow:0 0 6px ${colors[key]}66"></div>
-      <span class="legend-label">${meta.label}</span>
+      <span class="legend-label">${label}</span>
       <span class="legend-count">${counts[key]}</span>
     </div>`).join('');
-
   el.innerHTML = `
     <div class="donut-wrap">
-      <svg viewBox="0 0 180 180" width="160" height="160" role="img" aria-label="Répartition par statut">
+      <svg viewBox="0 0 140 140" width="120" height="120" role="img" aria-label="Répartition des tâches">
         ${arcs}
-        <text x="${cx}" y="${cy - 6}" text-anchor="middle" class="donut-center">${total}</text>
-        <text x="${cx}" y="${cy + 14}" text-anchor="middle" class="donut-center-label">PROJETS</text>
+        <text x="${cx}" y="${cy - 5}" text-anchor="middle" class="donut-center" style="font-size:1.2rem">${total}</text>
+        <text x="${cx}" y="${cy + 13}" text-anchor="middle" class="donut-center-label">TÂCHES</text>
       </svg>
       <div class="donut-legend">${legend}</div>
     </div>`;
 }
 
-// ── Render: activity bar chart ────────────────────────────────────────────────
-
-function renderActivityChart() {
-  const el = document.getElementById('chart-activity');
+function renderBurndownChart(p, sprint) {
+  const el = document.getElementById('pv-chart-burndown');
   if (!el) return;
-
-  const W = 520, H = 150, pad = { top: 10, right: 10, bottom: 30, left: 24 };
-  const innerW = W - pad.left - pad.right;
-  const innerH = H - pad.top - pad.bottom;
-  const weeks = 12;
-
-  const now = new Date();
-  const buckets = Array.from({ length: weeks }, (_, i) => {
-    const d = new Date(now);
-    d.setDate(d.getDate() - (weeks - 1 - i) * 7);
-    return { week: d, count: 0, label: '' };
-  });
-
-  const getWeekStart = d => {
-    const s = new Date(d);
-    s.setHours(0, 0, 0, 0);
-    s.setDate(s.getDate() - s.getDay());
-    return s.getTime();
-  };
-
-  const weekStarts = buckets.map(b => getWeekStart(b.week));
-
-  state.projects.forEach(p => {
-    const d = new Date(p.updatedAt || p.createdAt);
-    const ws = getWeekStart(d);
-    const idx = weekStarts.indexOf(ws);
-    if (idx >= 0) buckets[idx].count++;
-  });
-
-  const maxCount = Math.max(...buckets.map(b => b.count), 1);
-  const barW = innerW / weeks;
-  const barPad = barW * 0.2;
-
-  const months = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
-  let lastMonth = -1;
-
-  const bars = buckets.map((b, i) => {
-    const bH = (b.count / maxCount) * innerH;
-    const x = pad.left + i * barW + barPad / 2;
-    const y = pad.top + innerH - bH;
-    const w = barW - barPad;
-    const mo = b.week.getMonth();
-    let label = '';
-    if (mo !== lastMonth) { label = months[mo]; lastMonth = mo; }
-    return { x, y, w, bH, count: b.count, label, week: b.week };
-  });
-
-  const yTick = maxCount === 1 ? 1 : Math.ceil(maxCount / 3);
-  const yTicks = [];
-  for (let v = 0; v <= maxCount; v += yTick) yTicks.push(v);
-
-  const defs = `<defs>
-    <linearGradient id="bar-grad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#d4a574"/>
-      <stop offset="100%" stop-color="#8a6440"/>
-    </linearGradient>
-  </defs>`;
-
-  const grid = yTicks.map(v => {
-    const y = pad.top + innerH - (v / maxCount) * innerH;
-    return `<line class="axis" x1="${pad.left}" x2="${pad.left + innerW}" y1="${y}" y2="${y}"/>
-      <text class="tick" x="${pad.left - 4}" y="${y + 3}" text-anchor="end">${v}</text>`;
-  }).join('');
-
-  const barsEl = bars.map(b => `
-    <rect class="bar" x="${b.x}" y="${b.y}" width="${b.w}" height="${Math.max(b.bH, b.count ? 2 : 0)}"
-      rx="3" fill="url(#bar-grad)" opacity="${b.count ? 1 : 0.2}">
-      <title>${b.count} projet${b.count !== 1 ? 's' : ''} — sem. du ${b.week.toLocaleDateString('fr-FR')}</title>
-    </rect>
-    ${b.label ? `<text class="tick" x="${b.x + b.w / 2}" y="${pad.top + innerH + 18}" text-anchor="middle">${b.label}</text>` : ''}`
+  const tasks = (p.tasks || []).filter(t => t.sprintId === sprint.id);
+  if (!tasks.length) {
+    el.innerHTML = `<p style="color:var(--text-muted);font-size:0.8rem;padding:0.75rem 0">Aucune tâche dans ce sprint.</p>`;
+    return;
+  }
+  const start = new Date(sprint.startDate); start.setHours(0, 0, 0, 0);
+  const end   = new Date(sprint.endDate);   end.setHours(23, 59, 59, 999);
+  const today = new Date();
+  const plotEnd = today < end ? today : end;
+  const days = [];
+  for (let d = new Date(start); d <= plotEnd; d = new Date(d.getTime() + 86400000)) {
+    const remaining = tasks.filter(t => !t.completedAt || new Date(t.completedAt) > d).length;
+    days.push({ ts: d.getTime(), remaining });
+  }
+  const total = tasks.length;
+  const W = 340, H = 140, pad = { top: 10, right: 12, bottom: 28, left: 28 };
+  const iW = W - pad.left - pad.right, iH = H - pad.top - pad.bottom;
+  const xS = ts => pad.left + ((ts - start.getTime()) / (end.getTime() - start.getTime())) * iW;
+  const yS = v  => pad.top  + iH - (v / total) * iH;
+  const idealPath = `M ${xS(start.getTime())} ${yS(total)} L ${xS(end.getTime())} ${yS(0)}`;
+  const actualPath = days.length > 1 ? `M ${days.map(d => `${xS(d.ts)} ${yS(d.remaining)}`).join(' L ')}` : '';
+  const yTicks = [0, Math.ceil(total / 2), total].map(v =>
+    `<line x1="${pad.left}" x2="${pad.left+iW}" y1="${yS(v)}" y2="${yS(v)}" stroke="rgba(212,165,116,0.08)" stroke-width="1"/>
+     <text x="${pad.left-4}" y="${yS(v)+4}" text-anchor="end" class="tick">${v}</text>`
   ).join('');
-
+  const fmt = d => d.toLocaleDateString('fr-FR', { day:'numeric', month:'short' });
   el.innerHTML = `
-    <div class="activity-chart">
-      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Activité sur 12 semaines" class="bar-chart">
-        ${defs}${grid}${barsEl}
-        <line class="axis" x1="${pad.left}" x2="${pad.left + innerW}" y1="${pad.top + innerH}" y2="${pad.top + innerH}"/>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" class="bar-chart">
+      ${yTicks}
+      <path d="${idealPath}" stroke="rgba(212,165,116,0.3)" stroke-width="1.5" fill="none" stroke-dasharray="4 3"/>
+      ${actualPath ? `<path d="${actualPath}" stroke="#55efc4" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>` : ''}
+      <line x1="${pad.left}" x2="${pad.left+iW}" y1="${pad.top+iH}" y2="${pad.top+iH}" stroke="rgba(212,165,116,0.15)" stroke-width="1"/>
+      <text x="${xS(start.getTime())}" y="${H-6}" class="tick" text-anchor="start">${fmt(start)}</text>
+      <text x="${xS(end.getTime())}"   y="${H-6}" class="tick" text-anchor="end">${fmt(end)}</text>
+    </svg>
+    <div class="pv-chart-legend">
+      <span style="color:rgba(212,165,116,0.5)">— Idéal</span>
+      <span style="color:#55efc4">— Réel</span>
+    </div>`;
+}
+
+function renderSprintVelocity(p) {
+  const el = document.getElementById('pv-chart-velocity');
+  if (!el) return;
+  const sprints = p.sprints || [];
+  const tasks   = p.tasks   || [];
+  if (!sprints.length) return;
+  const data = sprints.map(s => ({
+    name:  s.name,
+    done:  tasks.filter(t => t.sprintId === s.id && t.status === 'done').length,
+    total: tasks.filter(t => t.sprintId === s.id).length,
+    isDone: s.status === 'done',
+  }));
+  const W = 340, H = 140, pad = { top: 16, right: 12, bottom: 30, left: 24 };
+  const iW = W - pad.left - pad.right, iH = H - pad.top - pad.bottom;
+  const maxVal = Math.max(...data.map(d => d.total), 1);
+  const barW = iW / data.length, barPad = barW * 0.25;
+  const defs = data.map((d, i) => {
+    const c = d.isDone ? '#74b9ff' : '#55efc4';
+    const cd = d.isDone ? '#3a82c4' : '#2fbf95';
+    return `<linearGradient id="vg${i}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${c}"/><stop offset="100%" stop-color="${cd}"/></linearGradient>`;
+  }).join('');
+  const bars = data.map((d, i) => {
+    const bH    = (d.done  / maxVal) * iH;
+    const totH  = (d.total / maxVal) * iH;
+    const x = pad.left + i * barW + barPad / 2, w = barW - barPad;
+    const c = d.isDone ? '#74b9ff' : '#55efc4';
+    const label = d.name.length > 9 ? d.name.slice(0, 8) + '…' : d.name;
+    return `
+      <rect x="${x}" y="${pad.top+iH-totH}" width="${w}" height="${Math.max(totH,2)}" rx="3" fill="rgba(212,165,116,0.1)"/>
+      <rect x="${x}" y="${pad.top+iH-bH}"   width="${w}" height="${Math.max(bH, d.done ? 2 : 0)}" rx="3" fill="url(#vg${i})" opacity="${d.done ? 1 : 0.3}">
+        <title>${d.done}/${d.total} — ${d.name}</title>
+      </rect>
+      <text x="${x+w/2}" y="${H-6}" class="tick" text-anchor="middle">${label}</text>
+      ${d.done ? `<text x="${x+w/2}" y="${pad.top+iH-bH-5}" class="tick" text-anchor="middle" style="fill:${c}">${d.done}</text>` : ''}`;
+  }).join('');
+  el.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" class="bar-chart">
+      <defs>${defs}</defs>
+      ${bars}
+      <line x1="${pad.left}" x2="${pad.left+iW}" y1="${pad.top+iH}" y2="${pad.top+iH}" stroke="rgba(212,165,116,0.15)" stroke-width="1"/>
+    </svg>`;
+}
+
+function renderProjectGantt(p) {
+  const el = document.getElementById('pv-chart-gantt');
+  if (!el) return;
+  const sprints = (p.sprints || []).filter(s => s.startDate && s.endDate);
+  if (!sprints.length) return;
+  const allDates = sprints.flatMap(s => [new Date(s.startDate), new Date(s.endDate)]);
+  const minDate = new Date(Math.min(...allDates.map(d => d.getTime())));
+  const maxDate = new Date(Math.max(...allDates.map(d => d.getTime())));
+  const totalMs = Math.max(maxDate.getTime() - minDate.getTime(), 1);
+  const rowH = 34, W = 600, pad = { top: 8, right: 16, bottom: 26, left: 16 };
+  const labelW = 110, iW = W - pad.left - pad.right - labelW;
+  const H = pad.top + sprints.length * rowH + pad.bottom;
+  const today = new Date();
+  const todayX = pad.left + labelW + ((today.getTime() - minDate.getTime()) / totalMs) * iW;
+  const showToday = today >= minDate && today <= maxDate;
+  const rows = sprints.map((s, i) => {
+    const x1 = pad.left + labelW + ((new Date(s.startDate).getTime() - minDate.getTime()) / totalMs) * iW;
+    const x2 = pad.left + labelW + ((new Date(s.endDate).getTime()   - minDate.getTime()) / totalMs) * iW;
+    const bW  = Math.max(x2 - x1, 4);
+    const y   = pad.top + i * rowH;
+    const tasksDone  = (p.tasks || []).filter(t => t.sprintId === s.id && t.status === 'done').length;
+    const tasksTotal = (p.tasks || []).filter(t => t.sprintId === s.id).length;
+    const fill = tasksTotal ? tasksDone / tasksTotal : 0;
+    const color = s.status === 'done' ? '#74b9ff' : '#55efc4';
+    const name = s.name.length > 14 ? s.name.slice(0, 13) + '…' : s.name;
+    return `
+      <text x="${pad.left+labelW-6}" y="${y+rowH/2+4}" text-anchor="end" class="tick" style="font-size:10px">${escHtml(name)}</text>
+      <rect x="${x1}" y="${y+6}" width="${bW}" height="${rowH-12}" rx="4" fill="${color}" opacity="0.15"/>
+      <rect x="${x1}" y="${y+6}" width="${bW*fill}" height="${rowH-12}" rx="4" fill="${color}" opacity="0.8" style="filter:drop-shadow(0 0 4px ${color}55)"/>
+      ${s.status === 'done' ? `<text x="${x1+bW+5}" y="${y+rowH/2+4}" class="tick" style="fill:${color}">✓</text>` : ''}`;
+  }).join('');
+  let monthTicks = '';
+  const mfmt = d => d.toLocaleDateString('fr-FR', { month:'short', year:'2-digit' });
+  for (let d = new Date(minDate.getFullYear(), minDate.getMonth(), 1); d <= maxDate; d = new Date(d.getFullYear(), d.getMonth()+1, 1)) {
+    const x = pad.left + labelW + ((d.getTime() - minDate.getTime()) / totalMs) * iW;
+    if (x >= pad.left + labelW)
+      monthTicks += `<line x1="${x}" x2="${x}" y1="${pad.top}" y2="${H-pad.bottom}" stroke="rgba(212,165,116,0.07)" stroke-width="1"/>
+        <text x="${x}" y="${H-6}" class="tick" text-anchor="middle">${mfmt(d)}</text>`;
+  }
+  el.innerHTML = `
+    <div class="gantt-scroll">
+      <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" class="bar-chart">
+        ${monthTicks}${rows}
+        ${showToday ? `<line x1="${todayX}" x2="${todayX}" y1="${pad.top}" y2="${H-pad.bottom}" stroke="var(--accent-warm)" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.6"/>` : ''}
+        <line x1="${pad.left+labelW}" x2="${pad.left+labelW+iW}" y1="${H-pad.bottom}" y2="${H-pad.bottom}" stroke="rgba(212,165,116,0.15)" stroke-width="1"/>
       </svg>
     </div>`;
+}
+
+function renderActivityLog(p) {
+  const el = document.getElementById('pv-activity-log');
+  if (!el) return;
+  const log = p.activityLog || [];
+  if (!log.length) {
+    el.innerHTML = `<div class="activity-empty">Aucune activité encore enregistrée.</div>`;
+    return;
+  }
+  const icons = { task_done:'✓', sprint_started:'🚀', sprint_completed:'🏁', sprint_deleted:'🗑', status_changed:'🔄' };
+  el.innerHTML = log.map(e => `
+    <div class="activity-item">
+      <span class="activity-icon">${icons[e.type] || '·'}</span>
+      <span class="activity-text">${escHtml(e.text)}</span>
+      <span class="activity-date">${relativeDate(e.date)}</span>
+    </div>`).join('');
+}
+
+function renderFocusWidget() {
+  const el = document.getElementById('focus-widget');
+  if (!el) return;
+  const groups = state.projects
+    .filter(p => p.status === 'active')
+    .map(p => ({ project: p, tasks: (p.tasks || []).filter(t => t.status === 'doing') }))
+    .filter(g => g.tasks.length > 0);
+  if (!groups.length) {
+    el.innerHTML = `<div class="focus-empty">Aucune tâche "En cours" sur tes projets actifs.</div>`;
+    return;
+  }
+  el.innerHTML = groups.map(g => `
+    <div class="focus-group">
+      <div class="focus-group-header">
+        <span class="project-status">${STATUS_META[g.project.status]?.emoji || '🟢'}</span>
+        <span class="focus-project-name">${escHtml(g.project.name)}</span>
+        <span class="focus-task-count">${g.tasks.length} en cours</span>
+      </div>
+      <div class="focus-task-list">
+        ${g.tasks.map(t => `
+          <div class="focus-task-item" data-project-id="${escHtml(g.project.id)}">
+            <span class="focus-task-dot"></span>
+            <span class="focus-task-title">${escHtml(t.title)}</span>
+          </div>`).join('')}
+      </div>
+    </div>`).join('');
+  el.querySelectorAll('.focus-task-item').forEach(item => {
+    item.addEventListener('click', () => openProjectView(item.dataset.projectId));
+  });
+}
+
+function renderGlobalGantt() {
+  const el = document.getElementById('chart-global-gantt');
+  if (!el) return;
+  const allSprints = [];
+  state.projects.forEach((proj, pi) => {
+    const color = getProjectColor(pi);
+    (proj.sprints || []).filter(s => s.startDate && s.endDate).forEach(s => {
+      allSprints.push({ ...s, projectName: proj.name, projectId: proj.id, color });
+    });
+  });
+  if (!allSprints.length) {
+    el.innerHTML = `<div style="color:var(--text-muted);font-size:0.82rem;padding:1rem;text-align:center">Aucun sprint avec des dates défini. Crée des sprints dans tes projets.</div>`;
+    return;
+  }
+  allSprints.sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+  const allDates = allSprints.flatMap(s => [new Date(s.startDate), new Date(s.endDate)]);
+  const minDate = new Date(Math.min(...allDates.map(d => d.getTime())));
+  const maxDate = new Date(Math.max(...allDates.map(d => d.getTime())));
+  const totalMs = Math.max(maxDate.getTime() - minDate.getTime(), 1);
+  const rowH = 36, W = 700, pad = { top: 8, right: 16, bottom: 28, left: 16 };
+  const labelW = 130, iW = W - pad.left - pad.right - labelW;
+  const H = pad.top + allSprints.length * rowH + pad.bottom;
+  const today = new Date();
+  const todayX = pad.left + labelW + ((today.getTime() - minDate.getTime()) / totalMs) * iW;
+  const showToday = today >= minDate && today <= maxDate;
+  const rows = allSprints.map((s, i) => {
+    const x1 = pad.left + labelW + ((new Date(s.startDate).getTime() - minDate.getTime()) / totalMs) * iW;
+    const x2 = pad.left + labelW + ((new Date(s.endDate).getTime()   - minDate.getTime()) / totalMs) * iW;
+    const bW  = Math.max(x2 - x1, 6);
+    const y   = pad.top + i * rowH;
+    const label = `${s.projectName} · ${s.name}`;
+    const displayLabel = label.length > 20 ? label.slice(0, 19) + '…' : label;
+    return `
+      <g class="gantt-row" data-project-id="${escHtml(s.projectId)}">
+        <text x="${pad.left+labelW-6}" y="${y+rowH/2+4}" text-anchor="end" class="tick" style="font-size:9.5px">${escHtml(displayLabel)}</text>
+        <rect x="${x1}" y="${y+8}" width="${bW}" height="${rowH-16}" rx="4" fill="${s.color}" opacity="${s.status === 'done' ? 0.3 : 0.7}" style="filter:drop-shadow(0 0 4px ${s.color}44)">
+          <title>${escHtml(s.projectName)} — ${escHtml(s.name)}</title>
+        </rect>
+        ${s.status === 'done' ? `<text x="${x1+bW/2}" y="${y+rowH/2+4}" text-anchor="middle" style="font-size:9px;fill:#fff;pointer-events:none">✓</text>` : ''}
+      </g>`;
+  }).join('');
+  let monthTicks = '';
+  const mfmt = d => d.toLocaleDateString('fr-FR', { month:'short', year:'2-digit' });
+  for (let d = new Date(minDate.getFullYear(), minDate.getMonth(), 1); d <= maxDate; d = new Date(d.getFullYear(), d.getMonth()+1, 1)) {
+    const x = pad.left + labelW + ((d.getTime() - minDate.getTime()) / totalMs) * iW;
+    if (x >= pad.left + labelW)
+      monthTicks += `<line x1="${x}" x2="${x}" y1="${pad.top}" y2="${H-pad.bottom}" stroke="rgba(212,165,116,0.07)" stroke-width="1"/>
+        <text x="${x}" y="${H-6}" class="tick" text-anchor="middle">${mfmt(d)}</text>`;
+  }
+  el.innerHTML = `
+    <div class="gantt-scroll">
+      <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Gantt global" class="bar-chart">
+        ${monthTicks}${rows}
+        ${showToday ? `<line x1="${todayX}" x2="${todayX}" y1="${pad.top}" y2="${H-pad.bottom}" stroke="var(--accent-warm)" stroke-width="1.5" stroke-dasharray="3 2" opacity="0.7"/>` : ''}
+      </svg>
+    </div>`;
+  el.querySelectorAll('.gantt-row').forEach(row => {
+    row.addEventListener('click', () => { if (row.dataset.projectId) openProjectView(row.dataset.projectId); });
+  });
 }
 
 // ── Main render ───────────────────────────────────────────────────────────────
@@ -495,14 +688,17 @@ function render() {
 
   renderTagFilter();
   renderProjects();
-  renderStatusChart();
-  renderActivityChart();
+  renderFocusWidget();
+  renderGlobalGantt();
 }
 
 // ── Project detail view ──────────────────────────────────────────────────────
 
 function openProjectView(id) {
+  const proj = state.projects.find(p => p.id === id);
+  const firstActiveSprint = (proj?.sprints || []).find(s => s.status === 'active');
   state.currentProjectId = id;
+  state.currentSprintTab = firstActiveSprint?.id || 'backlog';
   state.notesMode = 'edit';
   render();
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -522,14 +718,52 @@ function renderProjectView(p) {
   const prog = displayProgress(p);
   const auto = p.progressMode === 'auto';
   const tags = (p.tags || []).map(t => `<span class="tag-chip">${escHtml(t)}</span>`).join('');
-  const tasks = p.tasks || [];
-  const doneCount = tasks.filter(t => t.status === 'done' || (t.subtasks?.length && t.subtasks.every(s => s.done))).length;
+  const sprints = p.sprints || [];
+  const allTasks = p.tasks || [];
+
+  const currentTab = state.currentSprintTab || 'backlog';
+  const currentSprint = sprints.find(s => s.id === currentTab);
+  const tabTasks = currentTab === 'backlog'
+    ? allTasks.filter(t => !t.sprintId)
+    : allTasks.filter(t => t.sprintId === currentTab);
+  const doneCount = tabTasks.filter(t => t.status === 'done').length;
+
+  // Sprint tabs
+  const backlogCount = allTasks.filter(t => !t.sprintId).length;
+  const sprintTabsHtml = sprints.map(s => {
+    const sCount = allTasks.filter(t => t.sprintId === s.id).length;
+    const start = s.startDate ? new Date(s.startDate) : null;
+    const end   = s.endDate   ? new Date(s.endDate)   : null;
+    const dateRange = (start && end)
+      ? `${start.toLocaleDateString('fr-FR', { day:'numeric', month:'short' })} → ${end.toLocaleDateString('fr-FR', { day:'numeric', month:'short' })}`
+      : '';
+    return `
+      <button class="sprint-tab${s.status === 'done' ? ' is-done' : ''}${currentTab === s.id ? ' is-active' : ''}" data-sprint-tab="${escHtml(s.id)}">
+        <span class="sprint-tab-name">${escHtml(s.name)}</span>
+        ${dateRange ? `<span class="sprint-tab-dates">${dateRange}</span>` : ''}
+        <span class="sprint-tab-count">${sCount}</span>
+        ${s.status === 'done' ? '<span class="sprint-tab-done-badge">✓</span>' : ''}
+      </button>`;
+  }).join('');
+
+  // Sprint info bar
+  const sprintInfoHtml = currentSprint ? `
+    <div class="sprint-info-bar">
+      <span class="sprint-info-dates">📅 ${new Date(currentSprint.startDate).toLocaleDateString('fr-FR', { day:'numeric', month:'long' })} → ${new Date(currentSprint.endDate).toLocaleDateString('fr-FR', { day:'numeric', month:'long' })}</span>
+      <span class="sprint-info-progress">${allTasks.filter(t => t.sprintId === currentSprint.id && t.status === 'done').length} / ${allTasks.filter(t => t.sprintId === currentSprint.id).length} tâches terminées</span>
+      <div class="sprint-info-actions">
+        <button class="btn btn-ghost" id="pv-edit-sprint" data-sprint-id="${escHtml(currentSprint.id)}">Modifier</button>
+        <button class="btn ${currentSprint.status === 'done' ? 'btn-ghost' : 'btn-primary'}" id="pv-toggle-sprint" data-sprint-id="${escHtml(currentSprint.id)}">
+          ${currentSprint.status === 'done' ? '↩ Réactiver' : '✓ Terminer'}
+        </button>
+      </div>
+    </div>` : '';
 
   root.innerHTML = `
     <div class="pv-topbar">
       <button class="btn-back" id="pv-back" aria-label="Retour à la liste">← Retour</button>
       <div class="pv-topbar-spacer"></div>
-      <button class="btn btn-ghost ${p.pinned ? 'is-pinned' : ''}" id="pv-pin" title="${p.pinned ? 'Désépingler' : 'Épingler'}">📌 ${p.pinned ? 'Épinglé' : 'Épingler'}</button>
+      <button class="btn btn-ghost ${p.pinned ? 'is-pinned' : ''}" id="pv-pin">📌 ${p.pinned ? 'Épinglé' : 'Épingler'}</button>
       <button class="btn btn-ghost" id="pv-edit">Modifier</button>
       <button class="btn btn-danger" id="pv-delete">Supprimer</button>
     </div>
@@ -559,16 +793,25 @@ function renderProjectView(p) {
       ${tags ? `<div class="pv-tags">${tags}</div>` : ''}
     </header>
 
-    <div class="pv-grid">
+    <div class="sprint-tabs-bar" id="pv-sprint-tabs">
+      <button class="sprint-tab${currentTab === 'backlog' ? ' is-active' : ''}" data-sprint-tab="backlog">
+        Backlog <span class="sprint-tab-count">${backlogCount}</span>
+      </button>
+      ${sprintTabsHtml}
+      <button class="sprint-tab sprint-tab-add" id="pv-add-sprint">+ Sprint</button>
+    </div>
 
+    ${sprintInfoHtml}
+
+    <div class="pv-body-grid">
       <section class="pv-card" aria-label="Tâches">
         <div class="pv-card-head">
-          <h3>Tâches</h3>
-          <span class="pv-card-meta">${doneCount} / ${tasks.length} terminée${tasks.length !== 1 ? 's' : ''}</span>
+          <h3>${currentTab === 'backlog' ? 'Backlog' : escHtml(currentSprint?.name || 'Sprint')}</h3>
+          <span class="pv-card-meta">${doneCount} / ${tabTasks.length} terminée${tabTasks.length !== 1 ? 's' : ''}</span>
         </div>
         <div class="task-list" id="pv-task-list"></div>
         <div class="task-add-row">
-          <input type="text" class="task-add-input" id="pv-task-add" placeholder="Ajouter une tâche... (Entrée pour valider)" />
+          <input type="text" class="task-add-input" id="pv-task-add" placeholder="Ajouter une tâche... (Entrée)" />
         </div>
       </section>
 
@@ -588,8 +831,17 @@ function renderProjectView(p) {
           : `<div class="notes-preview ${(!p.notes || !p.notes.trim()) ? 'is-empty' : ''}" id="pv-notes-preview"></div>`
         }
       </section>
-
     </div>
+
+    <section class="pv-charts-section" aria-label="Graphiques">
+      <div class="section-title">Graphiques</div>
+      <div class="pv-charts-grid" id="pv-charts-grid"></div>
+    </section>
+
+    <section class="pv-card pv-activity-card" aria-label="Activité récente">
+      <div class="pv-card-head"><h3>Activité récente</h3></div>
+      <div id="pv-activity-log" class="activity-log"></div>
+    </section>
   `;
 
   document.getElementById('pv-back').addEventListener('click', closeProjectView);
@@ -597,10 +849,21 @@ function renderProjectView(p) {
   document.getElementById('pv-delete').addEventListener('click', () => confirmDelete(p.id));
   document.getElementById('pv-pin').addEventListener('click', () => togglePin(p.id));
   document.getElementById('pv-export-md').addEventListener('click', () => exportNotesAsMd(p));
+  document.getElementById('pv-add-sprint').addEventListener('click', () => openSprintDialog(p.id));
 
-  renderTaskList(p);
-  setupTaskAddInput(p);
-  setupNotesArea(p);
+  if (currentSprint) {
+    document.getElementById('pv-edit-sprint')?.addEventListener('click', () => openSprintDialog(p.id, currentSprint));
+    document.getElementById('pv-toggle-sprint')?.addEventListener('click', () => {
+      toggleSprintStatus(p.id, currentSprint.id);
+    });
+  }
+
+  root.querySelectorAll('[data-sprint-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.currentSprintTab = btn.dataset.sprintTab;
+      render();
+    });
+  });
 
   root.querySelectorAll('[data-notes-mode]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -608,19 +871,29 @@ function renderProjectView(p) {
       render();
     });
   });
+
+  renderTaskList(p, tabTasks);
+  setupTaskAddInput(p, currentTab === 'backlog' ? null : currentTab);
+  setupNotesArea(p);
+  renderProjectCharts(p);
+  renderActivityLog(p);
 }
 
 // ── Tasks ────────────────────────────────────────────────────────────────────
 
-function renderTaskList(p) {
+function renderTaskList(p, filteredTasks = null) {
   const list = document.getElementById('pv-task-list');
   if (!list) return;
-  const tasks = p.tasks || [];
+  const tasks = filteredTasks !== null ? filteredTasks : (p.tasks || []);
+  const sprints = p.sprints || [];
 
   if (!tasks.length) {
-    list.innerHTML = `<div class="task-empty">Aucune tâche pour l'instant. Ajoutes-en une ci-dessous.</div>`;
+    list.innerHTML = `<div class="task-empty">Aucune tâche ici. Ajoutes-en une ci-dessous.</div>`;
     return;
   }
+
+  const sprintOptions = `<option value="">Backlog</option>` +
+    sprints.map(s => `<option value="${escHtml(s.id)}">${escHtml(s.name)}</option>`).join('');
 
   list.innerHTML = tasks.map(t => {
     const subs = t.subtasks || [];
@@ -632,6 +905,9 @@ function renderTaskList(p) {
         ${subs.length ? `<button class="task-expand ${isOpen ? 'is-open' : ''}" data-action="toggle-expand" aria-label="Afficher les sous-tâches">▶</button>` : `<span style="width:18px;flex-shrink:0"></span>`}
         <button class="task-status-btn status-${escHtml(t.status || 'todo')}" data-action="cycle-status" title="Changer le statut (À faire → En cours → Terminée)" aria-label="Statut: ${escHtml(TASK_STATUS_LABEL[t.status || 'todo'])}"></button>
         <input type="text" class="task-title-input" data-action="edit-title" value="${escHtml(t.title || '')}" placeholder="Titre de la tâche" />
+        <select class="task-sprint-select" data-action="change-sprint" aria-label="Sprint">
+          ${sprintOptions}
+        </select>
         <div class="task-actions">
           <button class="btn-icon" data-action="add-subtask" title="Ajouter une sous-tâche" aria-label="Ajouter une sous-tâche">+</button>
           <button class="btn-icon" data-action="delete-task" title="Supprimer la tâche" aria-label="Supprimer la tâche">🗑️</button>
@@ -669,6 +945,9 @@ function renderTaskList(p) {
         btn.addEventListener('click', () => deleteTask(p.id, taskId));
       } else if (action === 'toggle-expand') {
         btn.addEventListener('click', () => toggleTaskExpand(p.id, taskId));
+      } else if (action === 'change-sprint') {
+        btn.value = (p.tasks || []).find(t => t.id === taskId)?.sprintId || '';
+        btn.addEventListener('change', e => moveTaskToSprint(p.id, taskId, e.target.value || null));
       }
     });
     el.querySelectorAll('.subtask-row').forEach(row => {
@@ -745,7 +1024,7 @@ function reorderTasks(projectId, ids) {
   });
 }
 
-function setupTaskAddInput(p) {
+function setupTaskAddInput(p, sprintId = null) {
   const input = document.getElementById('pv-task-add');
   if (!input) return;
   input.addEventListener('keydown', e => {
@@ -753,7 +1032,7 @@ function setupTaskAddInput(p) {
       const title = input.value.trim();
       if (!title) return;
       input.value = '';
-      addTask(p.id, title);
+      addTask(p.id, title, sprintId);
       document.getElementById('pv-task-add')?.focus();
     }
   });
@@ -771,9 +1050,58 @@ function mutateProject(id, mutator) {
   scheduleSave();
 }
 
-function addTask(projectId, title) {
+function logActivity(p, type, text) {
+  p.activityLog = p.activityLog || [];
+  p.activityLog.unshift({ type, text, date: new Date().toISOString() });
+  if (p.activityLog.length > 30) p.activityLog.length = 30;
+}
+
+function addSprint(projectId, sprint) {
   mutateProject(projectId, p => {
-    p.tasks = [...(p.tasks || []), { id: uuid(), title, status: 'todo', subtasks: [] }];
+    p.sprints = [...(p.sprints || []), sprint];
+    logActivity(p, 'sprint_started', `Sprint "${sprint.name}" créé`);
+  });
+}
+
+function updateSprint(projectId, sprint) {
+  mutateProject(projectId, p => {
+    p.sprints = (p.sprints || []).map(s => s.id === sprint.id ? sprint : s);
+  });
+}
+
+function deleteSprint(projectId, sprintId) {
+  mutateProject(projectId, p => {
+    const sprint = (p.sprints || []).find(s => s.id === sprintId);
+    p.tasks = (p.tasks || []).map(t => t.sprintId === sprintId ? { ...t, sprintId: null } : t);
+    p.sprints = (p.sprints || []).filter(s => s.id !== sprintId);
+    if (sprint) logActivity(p, 'sprint_deleted', `Sprint "${sprint.name}" supprimé`);
+  });
+}
+
+function toggleSprintStatus(projectId, sprintId) {
+  mutateProject(projectId, p => {
+    const sprint = (p.sprints || []).find(s => s.id === sprintId);
+    if (!sprint) return;
+    const newStatus = sprint.status === 'done' ? 'active' : 'done';
+    p.sprints = (p.sprints || []).map(s => s.id === sprintId ? { ...s, status: newStatus } : s);
+    if (newStatus === 'done') logActivity(p, 'sprint_completed', `Sprint "${sprint.name}" terminé 🏁`);
+  });
+}
+
+function moveTaskToSprint(projectId, taskId, sprintId) {
+  mutateProject(projectId, p => {
+    p.tasks = (p.tasks || []).map(t =>
+      t.id === taskId ? { ...t, sprintId: sprintId || null } : t
+    );
+  });
+}
+
+function addTask(projectId, title, sprintId = null) {
+  mutateProject(projectId, p => {
+    p.tasks = [...(p.tasks || []), {
+      id: uuid(), title, status: 'todo', subtasks: [],
+      sprintId: sprintId || null, completedAt: null,
+    }];
   });
 }
 
@@ -789,7 +1117,9 @@ function cycleTaskStatus(projectId, taskId) {
       if (t.id !== taskId) return t;
       const idx = TASK_STATUS_ORDER.indexOf(t.status || 'todo');
       const next = TASK_STATUS_ORDER[(idx + 1) % TASK_STATUS_ORDER.length];
-      return { ...t, status: next };
+      const completedAt = next === 'done' ? new Date().toISOString() : null;
+      if (next === 'done') logActivity(p, 'task_done', `"${t.title}" terminée`);
+      return { ...t, status: next, completedAt };
     });
   });
 }
@@ -1080,6 +1410,74 @@ function setupProjectDialog() {
   trapFocus(dlg);
 }
 
+// ── Sprint dialog ─────────────────────────────────────────────────────────────
+
+function openSprintDialog(projectId, existing = null) {
+  const dlg = document.getElementById('sprint-dialog');
+  if (!dlg) return;
+  const isNew = !existing;
+  dlg.querySelector('.dialog-title').textContent = isNew ? 'Nouveau sprint' : 'Modifier le sprint';
+  dlg.querySelector('#sf-name').value    = existing?.name      || '';
+  dlg.querySelector('#sf-start').value   = existing?.startDate?.slice(0, 10) || '';
+  dlg.querySelector('#sf-end').value     = existing?.endDate?.slice(0, 10)   || '';
+  dlg.querySelector('#sf-status').value  = existing?.status    || 'active';
+  const btnDelete = dlg.querySelector('#btn-sprint-delete');
+  btnDelete.hidden = isNew;
+  btnDelete.dataset.projectId = projectId;
+  btnDelete.dataset.sprintId  = existing?.id || '';
+  const btnSave = dlg.querySelector('#btn-sprint-save');
+  btnSave.dataset.projectId = projectId;
+  btnSave.dataset.sprintId  = existing?.id || '';
+  btnSave.dataset.isNew     = isNew ? '1' : '';
+  dlg.showModal();
+  dlg.querySelector('#sf-name').focus();
+}
+
+function setupSprintDialog() {
+  const dlg = document.getElementById('sprint-dialog');
+  if (!dlg) return;
+  dlg.querySelector('#btn-sprint-cancel').addEventListener('click', () => dlg.close());
+  dlg.querySelector('.dialog-close').addEventListener('click',       () => dlg.close());
+  dlg.querySelector('#btn-sprint-delete').addEventListener('click', e => {
+    const { projectId, sprintId } = e.currentTarget.dataset;
+    dlg.close();
+    deleteSprint(projectId, sprintId);
+    if (state.currentSprintTab === sprintId) state.currentSprintTab = 'backlog';
+    render();
+    showToast('Sprint supprimé', 'ok');
+  });
+  dlg.querySelector('#btn-sprint-save').addEventListener('click', () => {
+    const name      = dlg.querySelector('#sf-name').value.trim();
+    const startDate = dlg.querySelector('#sf-start').value;
+    const endDate   = dlg.querySelector('#sf-end').value;
+    const status    = dlg.querySelector('#sf-status').value;
+    if (!name)      { dlg.querySelector('#sf-name').focus();  return; }
+    if (!startDate) { dlg.querySelector('#sf-start').focus(); return; }
+    if (!endDate)   { dlg.querySelector('#sf-end').focus();   return; }
+    if (endDate < startDate) {
+      showToast('La date de fin doit être après le début', 'error');
+      dlg.querySelector('#sf-end').focus();
+      return;
+    }
+    const btn = dlg.querySelector('#btn-sprint-save');
+    const { projectId } = btn.dataset;
+    const isNew    = btn.dataset.isNew === '1';
+    const sprintId = isNew ? uuid() : btn.dataset.sprintId;
+    const sprint   = { id: sprintId, name, startDate, endDate, status };
+    dlg.close();
+    if (isNew) {
+      addSprint(projectId, sprint);
+      state.currentSprintTab = sprintId;
+    } else {
+      updateSprint(projectId, sprint);
+    }
+    render();
+    showToast(isNew ? `Sprint "${name}" créé` : `Sprint "${name}" mis à jour`, 'ok');
+  });
+  dlg.addEventListener('keydown', e => { if (e.key === 'Escape') dlg.close(); });
+  trapFocus(dlg);
+}
+
 // ── Confirm dialog ────────────────────────────────────────────────────────────
 
 function confirmDelete(id) {
@@ -1232,6 +1630,9 @@ function setupKeyboardShortcuts() {
       } else if (e.key === 'p' || e.key === 'P') {
         e.preventDefault();
         if (proj) togglePin(proj.id);
+      } else if (e.key === 's' || e.key === 'S') {
+        e.preventDefault();
+        if (proj) openSprintDialog(proj.id);
       }
       return;
     }
@@ -1266,6 +1667,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   setupProjectDialog();
+  setupSprintDialog();
   setupToolbar();
   setupKeyboardShortcuts();
   setupConfirmDialog();

@@ -81,21 +81,18 @@
       <div class="projects-grid" id="projects-list" role="list"></div>
     </section>
 
-    <!-- Charts -->
-    <section aria-label="Graphiques">
-      <div class="section-title">Statistiques</div>
-      <div class="charts-grid">
+    <!-- Focus widget -->
+    <section aria-label="En cours">
+      <div class="section-title">En cours</div>
+      <div id="focus-widget" class="focus-widget"></div>
+    </section>
 
-        <div class="chart-card" id="chart-status-wrap">
-          <h3>Repartition par statut</h3>
-          <div id="chart-status"></div>
-        </div>
-
-        <div class="chart-card" id="chart-activity-wrap">
-          <h3>Activite - 12 dernieres semaines</h3>
-          <div id="chart-activity"></div>
-        </div>
-
+    <!-- Global Gantt -->
+    <section aria-label="Planning global">
+      <div class="section-title">Planning global</div>
+      <div class="chart-card chart-card-full">
+        <h3>Tous les sprints</h3>
+        <div id="chart-global-gantt"></div>
       </div>
     </section>
 
@@ -173,6 +170,43 @@
     <div class="dialog-footer-spacer"></div>
     <button class="btn btn-ghost" id="btn-dlg-cancel">Annuler</button>
     <button class="btn btn-primary" id="btn-dlg-save">Enregistrer</button>
+  </div>
+</dialog>
+
+<!-- ── Sprint dialog ─────────────────────────────────────────────────────────── -->
+<dialog id="sprint-dialog" aria-labelledby="sprint-dlg-title" aria-modal="true">
+  <div class="dialog-head">
+    <h2 class="dialog-title" id="sprint-dlg-title">Nouveau sprint</h2>
+    <button class="dialog-close" aria-label="Fermer">&#x2715;</button>
+  </div>
+  <div class="dialog-body">
+    <div class="field">
+      <label for="sf-name">Nom *</label>
+      <input type="text" id="sf-name" placeholder="Sprint 1, MVP, Phase alpha..." required autocomplete="off" />
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="sf-start">Début *</label>
+        <input type="date" id="sf-start" required />
+      </div>
+      <div class="field">
+        <label for="sf-end">Fin *</label>
+        <input type="date" id="sf-end" required />
+      </div>
+    </div>
+    <div class="field">
+      <label for="sf-status">Statut</label>
+      <select id="sf-status">
+        <option value="active">Actif</option>
+        <option value="done">Terminé</option>
+      </select>
+    </div>
+  </div>
+  <div class="dialog-footer">
+    <button class="btn btn-danger" id="btn-sprint-delete" hidden>Supprimer</button>
+    <div class="dialog-footer-spacer"></div>
+    <button class="btn btn-ghost" id="btn-sprint-cancel">Annuler</button>
+    <button class="btn btn-primary" id="btn-sprint-save">Enregistrer</button>
   </div>
 </dialog>
 
