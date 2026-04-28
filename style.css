@@ -541,12 +541,6 @@ main {
 
 /* ── Charts ────────────────────────────────────────────────────────────── */
 
-.charts-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
-  gap: 1.25rem;
-}
-
 .chart-card {
   background: var(--bg-column);
   border: 1px solid var(--border-subtle);
@@ -610,8 +604,6 @@ main {
   letter-spacing: 1.5px;
   text-transform: uppercase;
 }
-
-.activity-chart svg { width: 100%; height: 180px; display: block; }
 
 .bar-chart .bar { transition: opacity 0.15s; }
 .bar-chart .bar:hover { opacity: 0.8; }
@@ -778,19 +770,6 @@ dialog[open] { display: flex; flex-direction: column; }
 .toast.toast-ok .toast-icon { color: var(--status-active); }
 .toast .toast-icon { font-size: 1.1rem; }
 .toast .toast-text { flex: 1; line-height: 1.35; }
-.toast .toast-action {
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.7px;
-  color: var(--accent-warm);
-  padding: 0.25rem 0.6rem;
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
-  transition: background 0.15s, color 0.15s;
-}
-.toast .toast-action:hover { background: rgba(212, 165, 116, 0.12); }
-
 /* ── Animations ────────────────────────────────────────────────────────── */
 
 @keyframes fadeSlideIn {
@@ -1386,12 +1365,6 @@ dialog[open] { display: flex; flex-direction: column; }
 .notes-preview em { color: var(--text-primary); }
 .notes-preview input[type="checkbox"] { accent-color: var(--accent-warm); margin-right: 0.4em; }
 
-.notes-saved-indicator {
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  font-style: italic;
-}
-
 /* ── Sprint tabs ───────────────────────────────────────────────────────── */
 
 .sprint-tabs-bar {
@@ -1653,10 +1626,72 @@ dialog[open] { display: flex; flex-direction: column; }
   background: var(--bg-dark);
 }
 
+/* ── Focus & keyboard accessibility ───────────────────────────────────── */
+
+button:focus-visible,
+a:focus-visible,
+.project-card:focus-visible,
+.sprint-tab:focus-visible,
+.btn-back:focus-visible,
+[tabindex="0"]:focus-visible {
+  outline: 2px solid var(--accent-warm);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ── Sync indicator transition ─────────────────────────────────────────── */
+
+.sync-indicator .dot { transition: background 0.4s ease, box-shadow 0.4s ease; }
+
+#btn-refresh:disabled {
+  animation: spin 1s linear infinite;
+  opacity: 0.6;
+}
+
+/* ── Toast close button ────────────────────────────────────────────────── */
+
+.toast-close {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-left: 0.25rem;
+  border-radius: 4px;
+  font-size: 1.15rem;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+.toast-close:hover,
+.toast-close:focus-visible {
+  color: var(--text-primary);
+  background: rgba(212, 165, 116, 0.12);
+  outline: none;
+}
+
+/* ── Invalid field state ───────────────────────────────────────────────── */
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25%       { transform: translateX(-5px); }
+  75%       { transform: translateX(5px); }
+}
+
+.field input.is-invalid,
+.field input[type="date"].is-invalid,
+.field textarea.is-invalid,
+.field select.is-invalid {
+  border-color: var(--danger) !important;
+  background: rgba(255, 107, 107, 0.04) !important;
+  animation: shake 0.35s ease;
+}
+
 /* ── Responsive ────────────────────────────────────────────────────────── */
 
 @media (max-width: 1023px) {
-  .charts-grid { grid-template-columns: 1fr; }
   main, .app-header, .toolbar { padding-left: 1.25rem; padding-right: 1.25rem; }
   .pv-body-grid { grid-template-columns: 1fr; }
   .pv-charts-grid { grid-template-columns: 1fr; }
