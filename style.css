@@ -1626,6 +1626,69 @@ dialog[open] { display: flex; flex-direction: column; }
   background: var(--bg-dark);
 }
 
+/* ── Focus & keyboard accessibility ───────────────────────────────────── */
+
+button:focus-visible,
+a:focus-visible,
+.project-card:focus-visible,
+.sprint-tab:focus-visible,
+.btn-back:focus-visible,
+[tabindex="0"]:focus-visible {
+  outline: 2px solid var(--accent-warm);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ── Sync indicator transition ─────────────────────────────────────────── */
+
+.sync-indicator .dot { transition: background 0.4s ease, box-shadow 0.4s ease; }
+
+#btn-refresh:disabled {
+  animation: spin 1s linear infinite;
+  opacity: 0.6;
+}
+
+/* ── Toast close button ────────────────────────────────────────────────── */
+
+.toast-close {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-left: 0.25rem;
+  border-radius: 4px;
+  font-size: 1.15rem;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+.toast-close:hover,
+.toast-close:focus-visible {
+  color: var(--text-primary);
+  background: rgba(212, 165, 116, 0.12);
+  outline: none;
+}
+
+/* ── Invalid field state ───────────────────────────────────────────────── */
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25%       { transform: translateX(-5px); }
+  75%       { transform: translateX(5px); }
+}
+
+.field input.is-invalid,
+.field input[type="date"].is-invalid,
+.field textarea.is-invalid,
+.field select.is-invalid {
+  border-color: var(--danger) !important;
+  background: rgba(255, 107, 107, 0.04) !important;
+  animation: shake 0.35s ease;
+}
+
 /* ── Responsive ────────────────────────────────────────────────────────── */
 
 @media (max-width: 1023px) {

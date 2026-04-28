@@ -867,6 +867,16 @@ function renderProjectView(p) {
       state.currentSprintTab = btn.dataset.sprintTab;
       render();
     });
+    btn.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      e.preventDefault();
+      const tabs = [...root.querySelectorAll('[data-sprint-tab]')];
+      const idx = tabs.indexOf(btn);
+      const next = e.key === 'ArrowRight'
+        ? tabs[(idx + 1) % tabs.length]
+        : tabs[(idx - 1 + tabs.length) % tabs.length];
+      next?.focus();
+    });
   });
 
   root.querySelectorAll('[data-notes-mode]').forEach(btn => {
@@ -1357,6 +1367,8 @@ function setupProjectDialog() {
     dlg.querySelector('#f-progress-val').textContent = e.target.value + '%';
   });
 
+  dlg.querySelector('#f-name').addEventListener('input', e => e.target.classList.remove('is-invalid'));
+
   dlg.querySelectorAll('.progress-mode-toggle .mode-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = dlg.querySelector('#btn-dlg-save').dataset.id;
@@ -1375,7 +1387,7 @@ function setupProjectDialog() {
 
   dlg.querySelector('#btn-dlg-save').addEventListener('click', () => {
     const name = dlg.querySelector('#f-name').value.trim();
-    if (!name) { dlg.querySelector('#f-name').focus(); return; }
+    if (!name) { markInvalid(dlg.querySelector('#f-name')); return; }
 
     const btn = dlg.querySelector('#btn-dlg-save');
     const isNew = btn.dataset.isNew === '1';
@@ -1453,6 +1465,10 @@ function setupSprintDialog() {
   if (!dlg) return;
   dlg.querySelector('#btn-sprint-cancel').addEventListener('click', () => dlg.close());
   dlg.querySelector('.dialog-close').addEventListener('click',       () => dlg.close());
+
+  ['#sf-name', '#sf-start', '#sf-end'].forEach(id => {
+    dlg.querySelector(id)?.addEventListener('input', e => e.target.classList.remove('is-invalid'));
+  });
   dlg.querySelector('#btn-sprint-delete').addEventListener('click', e => {
     const { projectId, sprintId } = e.currentTarget.dataset;
     dlg.close();
@@ -1466,12 +1482,12 @@ function setupSprintDialog() {
     const startDate = dlg.querySelector('#sf-start').value;
     const endDate   = dlg.querySelector('#sf-end').value;
     const status    = dlg.querySelector('#sf-status').value;
-    if (!name)      { dlg.querySelector('#sf-name').focus();  return; }
-    if (!startDate) { dlg.querySelector('#sf-start').focus(); return; }
-    if (!endDate)   { dlg.querySelector('#sf-end').focus();   return; }
+    if (!name)      { markInvalid(dlg.querySelector('#sf-name'));  return; }
+    if (!startDate) { markInvalid(dlg.querySelector('#sf-start')); return; }
+    if (!endDate)   { markInvalid(dlg.querySelector('#sf-end'));   return; }
     if (endDate < startDate) {
       showToast('La date de fin doit être après le début', 'error');
-      dlg.querySelector('#sf-end').focus();
+      markInvalid(dlg.querySelector('#sf-end'));
       return;
     }
     const btn = dlg.querySelector('#btn-sprint-save');
@@ -1521,13 +1537,21 @@ function showToast(text, level = 'ok') {
   toast.className = `toast toast-${level}`;
   toast.setAttribute('role', 'status');
   const icon = level === 'error' ? '⚠️' : '✓';
-  toast.innerHTML = `<span class="toast-icon">${icon}</span><span class="toast-text">${escHtml(text)}</span>`;
-  region.appendChild(toast);
-  setTimeout(() => {
+  toast.innerHTML = `<span class="toast-icon">${icon}</span><span class="toast-text">${escHtml(text)}</span><button class="toast-close" aria-label="Fermer">&#x2715;</button>`;
+
+  const dismiss = () => {
     toast.classList.add('fade-out');
     toast.addEventListener('animationend', () => toast.remove(), { once: true });
     setTimeout(() => toast.remove(), 400);
-  }, 4000);
+  };
+
+  const timer = setTimeout(dismiss, 4000);
+  toast.querySelector('.toast-close').addEventListener('click', () => {
+    clearTimeout(timer);
+    dismiss();
+  });
+
+  region.appendChild(toast);
 }
 
 // ── Accessibility: focus trap ─────────────────────────────────────────────────
@@ -1658,6 +1682,13 @@ function setupKeyboardShortcuts() {
 }
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
+
+function markInvalid(input) {
+  input.classList.remove('is-invalid');
+  void input.offsetWidth; // force reflow to restart animation
+  input.classList.add('is-invalid');
+  input.focus();
+}
 
 function escHtml(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
